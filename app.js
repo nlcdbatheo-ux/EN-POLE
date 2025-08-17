@@ -12,7 +12,7 @@ function addMessage(sender, message) {
     chatMessages.scrollTop = chatMessages.scrollHeight;
 }
 
-const BOT_URL = "https://en-pole.onrender.com/chat";  // <- ajoute /chat
+const BOT_URL = "https://en-pole.onrender.com";  // <- ajoute /chat
 
 chatForm.addEventListener("submit", async (e) => {
     e.preventDefault();
