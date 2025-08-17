@@ -1,3 +1,6 @@
-flask
-flask-cors
-openai
+Flask==3.0.3
+flask-cors==4.0.0
+openai>=1.30.0
+APScheduler==3.10.4
+feedparser==6.0.11
+python-dateutil==2.9.0.post0
