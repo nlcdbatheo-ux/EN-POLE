@@ -6,31 +6,84 @@
     font-family: Arial, sans-serif;
 }
 
+/* Style global */
 body {
     background-color: #121212;
     color: #fff;
     display: flex;
     justify-content: center;
-    align-items: center;
-    height: 100vh;
+    align-items: flex-start;
+    min-height: 100vh;
+    padding: 20px;
 }
 
+/* Conteneur principal */
 .container {
     background-color: #1e1e1e;
     width: 100%;
-    max-width: 500px;
+    max-width: 700px;
     border-radius: 10px;
     padding: 20px;
     display: flex;
     flex-direction: column;
 }
 
+/* Titre principal */
 h1 {
     text-align: center;
     margin-bottom: 20px;
     color: #ff4c00;
 }
 
+/* --- SECTION NEWS --- */
+#news {
+    display: flex;
+    flex-direction: column;
+    gap: 15px;
+    margin-top: 20px;
+}
+
+.news-item {
+    background-color: #1e1e1e;
+    border: 1px solid #333;
+    border-radius: 10px;
+    padding: 15px;
+    transition: transform 0.2s ease, border-color 0.2s ease;
+}
+
+.news-item:hover {
+    transform: scale(1.02);
+    border-color: #ff4c00;
+}
+
+.news-item h3 {
+    color: #ff4c00;
+    margin-bottom: 8px;
+}
+
+.news-item p {
+    margin-bottom: 10px;
+    line-height: 1.4;
+}
+
+.news-item a {
+    color: #ff4c00;
+    text-decoration: none;
+    font-weight: bold;
+}
+
+.news-item a:hover {
+    text-decoration: underline;
+}
+
+.news-item small {
+    display: block;
+    margin-top: 10px;
+    font-size: 0.8em;
+    color: #aaa;
+}
+
+/* --- (Optionnel) STYLES CHAT --- */
 .chat-messages {
     flex: 1;
     overflow-y: auto;
