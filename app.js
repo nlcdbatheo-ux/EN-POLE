@@ -4,7 +4,7 @@ const chatInput = document.getElementById("chat-input");
 const chatMessages = document.getElementById("chat-messages");
 
 // URL de ton bot Render
-const BOT_URL = "https://en-pole-bot.onrender.com/";
+const BOT_URL = "https://en-pole.onrender.com/";
 
 // Fonction pour afficher un message dans le chat
 function addMessage(sender, message) {
