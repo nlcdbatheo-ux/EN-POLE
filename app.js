@@ -1,49 +1,35 @@
-// Sélection des éléments du DOM
-const chatForm = document.getElementById("chat-form");
-const chatInput = document.getElementById("chat-input");
-const chatMessages = document.getElementById("chat-messages");
+const newsContainer = document.getElementById("news");
 
-// Fonction pour afficher un message dans le chat
-function addMessage(sender, message) {
-    const messageElement = document.createElement("div");
-    messageElement.classList.add("message", sender);
-    messageElement.textContent = message;
-    chatMessages.appendChild(messageElement);
-    chatMessages.scrollTop = chatMessages.scrollHeight;
+// Fonction pour afficher les news
+function displayNews(items) {
+    newsContainer.innerHTML = ""; // reset
+    items.forEach(item => {
+        const el = document.createElement("div");
+        el.classList.add("news-item");
+        el.innerHTML = `
+            <h3>${item.title}</h3>
+            <p>${item.summary}</p>
+            <a href="${item.url}" target="_blank">Lire l'article</a>
+            <small>Publié le ${new Date(item.published_at).toLocaleString()} — Sources: ${item.sources.join(", ")}</small>
+        `;
+        newsContainer.appendChild(el);
+    });
 }
 
-const BOT_URL = "https://en-pole.onrender.com";  // <- ajoute /chat
-
-chatForm.addEventListener("submit", async (e) => {
-    e.preventDefault();
-    const userMessage = chatInput.value.trim();
-    if (!userMessage) return;
-
-    addMessage("user", userMessage);
-    chatInput.value = "";
-    chatInput.disabled = true;
-
+// Fonction pour charger les news depuis le backend
+async function loadNews() {
     try {
-        // Envoie la requête au bot Render
-        const response = await fetch(BOT_URL, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ message: userMessage }) // <- "message", pas "prompt"
-        });
-
-        if (!response.ok) {
-            throw new Error(`Erreur HTTP ${response.status}`);
-        }
-
+        const response = await fetch("https://en-pole.onrender.com/news?limit=20");
+        if (!response.ok) throw new Error(`Erreur HTTP ${response.status}`);
         const data = await response.json();
-        const botMessage = data.reply || "Le bot n'a pas répondu."; // <- "reply", pas "response"
-
-        addMessage("bot", botMessage);
-
-    } catch (error) {
-        addMessage("bot", `Erreur : impossible de contacter le bot.\n${error.message}`);
-    } finally {
-        chatInput.disabled = false;
-        chatInput.focus();
+        displayNews(data.items);
+    } catch (err) {
+        newsContainer.innerHTML = `<p style="color:red;">Erreur chargement actus : ${err.message}</p>`;
     }
-});
+}
+
+// Charger au démarrage
+loadNews();
+
+// Rafraîchir toutes les 2 minutes
+setInterval(loadNews, 120000);
