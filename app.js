@@ -3,9 +3,6 @@ const chatForm = document.getElementById("chat-form");
 const chatInput = document.getElementById("chat-input");
 const chatMessages = document.getElementById("chat-messages");
 
-// URL de ton bot Render
-const BOT_URL = "https://en-pole.onrender.com/";
-
 // Fonction pour afficher un message dans le chat
 function addMessage(sender, message) {
     const messageElement = document.createElement("div");
@@ -15,13 +12,13 @@ function addMessage(sender, message) {
     chatMessages.scrollTop = chatMessages.scrollHeight;
 }
 
-// Événement lors de l'envoi du formulaire
+const BOT_URL = "https://en-pole.onrender.com/chat";  // <- ajoute /chat
+
 chatForm.addEventListener("submit", async (e) => {
     e.preventDefault();
     const userMessage = chatInput.value.trim();
     if (!userMessage) return;
 
-    // Affiche le message de l'utilisateur
     addMessage("user", userMessage);
     chatInput.value = "";
     chatInput.disabled = true;
@@ -31,7 +28,7 @@ chatForm.addEventListener("submit", async (e) => {
         const response = await fetch(BOT_URL, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ prompt: userMessage })
+            body: JSON.stringify({ message: userMessage }) // <- "message", pas "prompt"
         });
 
         if (!response.ok) {
@@ -39,13 +36,11 @@ chatForm.addEventListener("submit", async (e) => {
         }
 
         const data = await response.json();
-        const botMessage = data.response || "Le bot n'a pas répondu.";
+        const botMessage = data.reply || "Le bot n'a pas répondu."; // <- "reply", pas "response"
 
-        // Affiche la réponse du bot
         addMessage("bot", botMessage);
 
     } catch (error) {
-        // En cas d'erreur (bot inaccessible, etc.)
         addMessage("bot", `Erreur : impossible de contacter le bot.\n${error.message}`);
     } finally {
         chatInput.disabled = false;
