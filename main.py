@@ -346,8 +346,22 @@ def scheduled_job():
     try:
         stats = run_pipeline()
         print(f"[SCHEDULED] Stats: {stats}")
+
+        # Si aucune actu publiée, on ajoute un message automatique chaque heure pile
+        if stats.get("published", 0) == 0:
+            now = datetime.now(timezone.utc)
+            if now.minute == 0:  # déclenche seulement à HH:00
+                publish_story(
+                    title="⏳ Pas de nouvelles informations",
+                    summary="Pas de nouvelles informations cette heure-ci, revenez plus tard.",
+                    url="",
+                    sources=["System"],
+                    published_at=now_iso()
+                )
+                print("[INFO] Message 'pas de nouvelles' ajouté.")
     except Exception as e:
         print(f"[SCHEDULED][ERROR] {e}")
+
 
 # -------------------------------
 # API endpoints
