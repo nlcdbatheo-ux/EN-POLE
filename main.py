@@ -302,7 +302,6 @@ def run_pipeline() -> Dict[str, Any]:
 
     published_count = 0
     for g in groups:
-        # condition : plusieurs sources OU mots-clés majeurs
         has_keywords = any(kw in normalize_text(g['title'] + " " + g['raw_text']) for kw in KEYWORDS)
         if len(g["sources"]) >= CONFIRMATION_MIN_SOURCES or has_keywords:
             title = g["title"]
@@ -387,6 +386,7 @@ if __name__ == "__main__":
     scheduler.add_job(scheduled_job, "interval", minutes=FETCH_INTERVAL_MINUTES, id="news_job", replace_existing=True)
     scheduler.start()
 
+    # Auto-adapt for local vs Render
     port = int(os.getenv("PORT", "10000"))
-    debug = os.getenv("FLASK_DEBUG", "1") == "1"
-    app.run(host="0.0.0.0", port=port, debug=debug)
+    is_local = os.getenv("PORT") is None
+    app.run(host="0.0.0.0", port=port, debug=is_local)
