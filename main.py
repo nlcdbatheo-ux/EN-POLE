@@ -12,7 +12,7 @@ from apscheduler.schedulers.background import BackgroundScheduler
 import feedparser
 from dateutil import parser as dateparser
 
-# --- OpenAI (nouvelle lib 1.x) ---
+# --- OpenAI ---
 from openai import OpenAI
 OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
@@ -20,9 +20,7 @@ client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 # -------------------------------
 # Config & sources
 # -------------------------------
-# 5 sources RSS (modifiables via ENV si besoin)
 DEFAULT_SOURCES = [
-    # (nom lisible, url rss)
     ("Motorsport.com", "https://www.motorsport.com/rss/f1/news/"),
     ("Autosport",      "https://www.autosport.com/rss/f1"),
     ("RaceFans",       "https://www.racefans.net/feed/"),
@@ -36,9 +34,8 @@ for i, (name, url) in enumerate(DEFAULT_SOURCES, start=1):
     SOURCES.append((name, env_url if env_url else url))
 
 FETCH_INTERVAL_MINUTES = int(os.getenv("FETCH_INTERVAL_MINUTES", "10"))
-CONFIRMATION_MIN_SOURCES = int(os.getenv("CONFIRMATION_MIN_SOURCES", "2"))
-MAX_ITEMS_PER_SOURCE = int(os.getenv("MAX_ITEMS_PER_SOURCE", "30"))  # limite par fetch
-
+CONFIRMATION_MIN_SOURCES = int(os.getenv("CONFIRMATION_MIN_SOURCES", "1"))
+MAX_ITEMS_PER_SOURCE = int(os.getenv("MAX_ITEMS_PER_SOURCE", "30"))
 DB_PATH = os.getenv("DB_PATH", "news.db")
 
 # -------------------------------
@@ -61,13 +58,13 @@ def init_db():
     cur.execute("""
     CREATE TABLE IF NOT EXISTS news (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
-        key_hash TEXT UNIQUE,               -- hash pour éviter les doublons
+        key_hash TEXT UNIQUE,
         title TEXT,
         summary TEXT,
         url TEXT,
-        sources_json TEXT,                  -- liste des sources ayant confirmé
-        published_at TEXT,                  -- ISO 8601
-        created_at TEXT                     -- ISO 8601
+        sources_json TEXT,
+        published_at TEXT,
+        created_at TEXT
     )
     """)
     cur.execute("""
@@ -77,8 +74,8 @@ def init_db():
         title TEXT,
         description TEXT,
         url TEXT,
-        published_at TEXT,                  -- ISO 8601 si dispo
-        fetched_at TEXT                     -- ISO 8601
+        published_at TEXT,
+        fetched_at TEXT
     )
     """)
     conn.commit()
@@ -113,23 +110,17 @@ STOPWORDS = set("""
 f1 formule formula one grand prix gp le la les de du des d' l' un une au aux en et à a the for of in on
 """.split())
 
+KEYWORDS = ["verstappen", "hamilton", "leclerc", "sainz", "alonso", "perez", "bottas",
+            "cadillac", "red bull", "ferrari", "mercedes", "aston martin", "mclaren"]
+
 def key_from_title(title: str) -> str:
-    """
-    Crée une clé (hash cheap) à partir du titre pour grouper les articles.
-    On retire la ponctuation, les stopwords, et on trie les tokens.
-    """
     norm = normalize_text(title)
     tokens = [t for t in norm.split() if t not in STOPWORDS and len(t) > 2]
-    # On garde les 8 plus significatifs pour stabiliser la clé
     tokens = sorted(tokens)[:8]
     key = "-".join(tokens)
-    # Un mini-hash stable
-    return str(abs(hash(key)))  # suffisant pour éviter trop de collisions ici
+    return str(abs(hash(key)))
 
 def similar(a: str, b: str) -> float:
-    """
-    Similarité grossière par chevauchement de mots (Jaccard).
-    """
     sa = set([t for t in normalize_text(a).split() if t not in STOPWORDS])
     sb = set([t for t in normalize_text(b).split() if t not in STOPWORDS])
     if not sa or not sb:
@@ -138,18 +129,15 @@ def similar(a: str, b: str) -> float:
     union = len(sa | sb)
     return inter / max(1, union)
 
-def merge_groups(items: List[Dict[str, Any]], threshold: float = 0.55):
-    """
-    Groupe des items similaires (par titre) en "histoires".
-    Une histoire = { 'title', 'urls', 'sources', 'published_at', 'raw_text' }
-    """
+def merge_groups(items: List[Dict[str, Any]], threshold: float = 0.4):
     groups: List[Dict[str, Any]] = []
     for it in items:
         placed = False
         for g in groups:
-            if similar(g['title'], it['title']) >= threshold:
+            score = similar(g['title'] + " " + g['items'][0].get("description",""),
+                            it['title'] + " " + it.get("description",""))
+            if score >= threshold:
                 g['items'].append(it)
-                # Conserver titre le plus informatif (plus long)
                 if len(it['title']) > len(g['title']):
                     g['title'] = it['title']
                 placed = True
@@ -160,12 +148,10 @@ def merge_groups(items: List[Dict[str, Any]], threshold: float = 0.55):
                 'items': [it],
             })
 
-    # Structure finale
     stories = []
     for g in groups:
         srcs = list({i['source'] for i in g['items']})
         urls = [i['url'] for i in g['items'] if i.get('url')]
-        # date la plus ancienne (souvent la première publication)
         dates = [i['published_at'] for i in g['items'] if i.get('published_at')]
         pub = min(dates) if dates else now_iso()
         raw_text = "\n\n".join([
@@ -188,7 +174,7 @@ def fetch_source(name: str, url: str) -> List[Dict[str, Any]]:
     feed = feedparser.parse(url)
     out = []
     fetched_at = now_iso()
-    for i, e in enumerate(feed.entries[:MAX_ITEMS_PER_SOURCE]):
+    for e in feed.entries[:MAX_ITEMS_PER_SOURCE]:
         title = e.get("title", "").strip()
         if not title:
             continue
@@ -231,8 +217,7 @@ def fetch_all_sources() -> List[Dict[str, Any]]:
 REFORMULATE_SYSTEM_PROMPT = (
     "Tu es un journaliste spécialisé en Formule 1 pour le site 'En Pôle Position'. "
     "Tu rédiges en français, ton style est clair, concis et factuel. "
-    "Ne publie que ce qui est vérifié par plusieurs sources. "
-    "Ajoute si utile le contexte (équipe, pilotes, championnat) mais évite les spéculations."
+    "Ne publie que ce qui est vérifié par plusieurs sources ou très crédible. "
 )
 
 def reformulate_with_openai(title: str, raw_text: str, urls: List[str]) -> str:
@@ -241,8 +226,8 @@ def reformulate_with_openai(title: str, raw_text: str, urls: List[str]) -> str:
             f"Titre (provisoire) : {title}\n\n"
             f"Sources multiples (extraits) :\n{raw_text}\n\n"
             f"Liens :\n" + "\n".join(urls[:5]) + "\n\n"
-            "Tâche : Rédige un court article (3-5 phrases) qui résume l'information confirmée par au moins deux sources. "
-            "Ne mentionne pas OpenAI. Évite les redondances. Si l'info reste incertaine, indique-le."
+            "Tâche : Rédige un court article (3-5 phrases) qui résume l'information confirmée par les sources. "
+            "Ne mentionne pas OpenAI. Évite les redondances."
         )
         resp = client.chat.completions.create(
             model=OPENAI_MODEL,
@@ -256,7 +241,6 @@ def reformulate_with_openai(title: str, raw_text: str, urls: List[str]) -> str:
         return resp.choices[0].message.content.strip()
     except Exception as e:
         print(f"[ERROR] OpenAI reformulation: {e}")
-        # fallback: renvoyer quelque chose de propre
         return title
 
 # -------------------------------
@@ -305,13 +289,6 @@ def publish_story(title: str, summary: str, url: str, sources: List[str], publis
     return True
 
 def run_pipeline() -> Dict[str, Any]:
-    """
-    1) Fetch RSS de toutes les sources
-    2) Regroupe les articles similaires
-    3) Garde ceux avec >= CONFIRMATION_MIN_SOURCES
-    4) Reformule avec OpenAI
-    5) Publie en DB
-    """
     print("[PIPELINE] Démarrage…")
     raw = fetch_all_sources()
     print(f"[PIPELINE] {len(raw)} articles bruts")
@@ -320,16 +297,17 @@ def run_pipeline() -> Dict[str, Any]:
 
     save_raw_items(raw)
 
-    groups = merge_groups(raw, threshold=0.55)
+    groups = merge_groups(raw, threshold=0.4)
     print(f"[PIPELINE] {len(groups)} groupes candidats")
 
     published_count = 0
     for g in groups:
-        if len(g["sources"]) >= CONFIRMATION_MIN_SOURCES:
+        # condition : plusieurs sources OU mots-clés majeurs
+        has_keywords = any(kw in normalize_text(g['title'] + " " + g['raw_text']) for kw in KEYWORDS)
+        if len(g["sources"]) >= CONFIRMATION_MIN_SOURCES or has_keywords:
             title = g["title"]
             urls = g["urls"]
             summary = reformulate_with_openai(title, g["raw_text"], urls)
-            # URL principale = la première
             main_url = urls[0] if urls else ""
             ok = publish_story(title=title, summary=summary, url=main_url, sources=g["sources"], published_at=g["published_at"])
             if ok:
@@ -346,22 +324,8 @@ def scheduled_job():
     try:
         stats = run_pipeline()
         print(f"[SCHEDULED] Stats: {stats}")
-
-        # Si aucune actu publiée, on ajoute un message automatique chaque heure pile
-        if stats.get("published", 0) == 0:
-            now = datetime.now(timezone.utc)
-            if now.minute == 0:  # déclenche seulement à HH:00
-                publish_story(
-                    title="⏳ Pas de nouvelles informations",
-                    summary="Pas de nouvelles informations cette heure-ci, revenez plus tard.",
-                    url="",
-                    sources=["System"],
-                    published_at=now_iso()
-                )
-                print("[INFO] Message 'pas de nouvelles' ajouté.")
     except Exception as e:
         print(f"[SCHEDULED][ERROR] {e}")
-
 
 # -------------------------------
 # API endpoints
@@ -397,7 +361,6 @@ def list_news():
 
 @app.post("/refresh")
 def refresh():
-    # Optionnel: sécuriser avec un token simple
     expected = os.getenv("REFRESH_TOKEN")
     provided = request.headers.get("X-Refresh-Token")
     if expected and provided != expected:
@@ -405,7 +368,6 @@ def refresh():
     stats = run_pipeline()
     return jsonify({"ok": True, "stats": stats})
 
-# (Optionnel) route d'accueil
 @app.get("/")
 def home():
     return "✅ API 'En Pôle Position' News est en ligne. Endpoints: /news, /refresh (POST), /health"
@@ -415,7 +377,6 @@ def home():
 # -------------------------------
 if __name__ == "__main__":
     init_db()
-    # Lancer une première ingestion au démarrage
     try:
         print("[BOOT] Ingestion initiale…")
         stats = run_pipeline()
@@ -423,7 +384,6 @@ if __name__ == "__main__":
     except Exception as e:
         print(f"[BOOT][ERROR] {e}")
 
-    # Scheduler toutes les X minutes
     scheduler.add_job(scheduled_job, "interval", minutes=FETCH_INTERVAL_MINUTES, id="news_job", replace_existing=True)
     scheduler.start()
 
