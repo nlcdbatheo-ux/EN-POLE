@@ -1,51 +1,77 @@
 import os
 from flask import Flask, jsonify, request
 from flask_cors import CORS
-from apscheduler.schedulers.background import BackgroundScheduler
-import feedparser
+import openai
 from datetime import datetime
-import dateutil.parser
-# import openai  # Décommenter si tu utilises OpenAI
 
 # ======================
-# Configuration du Flask
+# Flask & CORS
 # ======================
 app = Flask(__name__)
-CORS(app)  # Autoriser les requêtes cross-origin
+CORS(app)
 
 # ======================
-# Pipeline / ingestion
+# OpenAI API Key
 # ======================
-# Exemple minimal : remplacer par ton code réel
+openai.api_key = os.environ.get("OPENAI_API_KEY")
+
+# ======================
+# Données et pipeline
+# ======================
 ARTICLES = []
 
-def fetch_articles(limit=20):
+def fetch_articles():
     """
-    Fonction pour récupérer les articles.
-    Remplace ceci par ton code réel d'ingestion.
+    Remplace cette fonction par tes flux RSS ou API réels
     """
-    return [{"id": i, "title": f"Article {i}", "published": datetime.now().isoformat()} for i in range(1, limit+1)]
+    site1 = [
+        {"id": 1, "title": "Événement A à Paris", "content": "La mairie organise un festival", "source": "Site1"},
+        {"id": 2, "title": "Sport B ce week-end", "content": "Le match aura lieu dimanche", "source": "Site1"}
+    ]
+    site2 = [
+        {"id": 3, "title": "Festival à Paris", "content": "La mairie lance un festival", "source": "Site2"},
+        {"id": 4, "title": "Match Sport B", "content": "Dimanche, le match aura lieu", "source": "Site2"}
+    ]
+    return site1 + site2
+
+def are_articles_similar(content1, content2):
+    """
+    Utilise OpenAI pour déterminer si deux articles parlent de la même chose
+    """
+    prompt = f"Est-ce que ces deux textes parlent du même sujet ? Répondre par 'oui' ou 'non'.\n\nTexte 1: {content1}\nTexte 2: {content2}"
+    try:
+        response = openai.ChatCompletion.create(
+            model="gpt-3.5-turbo",
+            messages=[{"role": "user", "content": prompt}],
+            max_tokens=5
+        )
+        answer = response.choices[0].message['content'].strip().lower()
+        return "oui" in answer
+    except Exception as e:
+        print("Erreur OpenAI:", e)
+        return False
 
 def pipeline_process():
     """
-    Traitement du pipeline : ingestion et grouping
+    Compare tous les articles et marque ceux qui sont similaires
     """
     global ARTICLES
-    print("[PIPELINE] Démarrage…")
-    articles = fetch_articles(60)  # Exemple : récupérer 60 articles
-    ARTICLES = articles  # Met à jour la liste globale
-    print(f"[PIPELINE] {len(articles)} articles bruts")
-    print(f"[PIPELINE] {len(articles)} groupes candidats")
-    print(f"[SCHEDULED] Stats: {{'fetched': {len(articles)}, 'groups': {len(articles)}, 'published': 0}}")
-    return articles
+    articles = fetch_articles()
+    duplicates = []
 
-# ======================
-# Scheduler (optionnel)
-# ======================
-scheduler = BackgroundScheduler()
-# Décommenter pour exécuter le pipeline toutes les 5 minutes par exemple
-# scheduler.add_job(func=pipeline_process, trigger="interval", minutes=5)
-scheduler.start()
+    for i, art1 in enumerate(articles):
+        for j, art2 in enumerate(articles):
+            if i >= j:
+                continue
+            if are_articles_similar(art1['content'], art2['content']):
+                duplicates.append({
+                    "article1": art1,
+                    "article2": art2
+                })
+
+    ARTICLES = articles
+    print(f"[PIPELINE] {len(articles)} articles traités, {len(duplicates)} doublons détectés")
+    return {"articles": articles, "duplicates": duplicates}
 
 # ======================
 # Routes Flask
@@ -53,18 +79,16 @@ scheduler.start()
 @app.route("/news")
 def news():
     limit = int(request.args.get("limit", 20))
-    # Retourne les derniers articles
     return jsonify(ARTICLES[:limit])
 
 @app.route("/run_pipeline")
 def run_pipeline():
-    articles = pipeline_process()
-    return jsonify({"status": "done", "processed_articles": len(articles)})
+    result = pipeline_process()
+    return jsonify(result)
 
 # ======================
 # Point d'entrée principal
 # ======================
 if __name__ == "__main__":
-    # Render fournit le port via la variable d'environnement PORT
-    port = int(os.environ.get("PORT", 10000))  # 10000 par défaut si local
+    port = int(os.environ.get("PORT", 10000))
     app.run(host="0.0.0.0", port=port, debug=True)
