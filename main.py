@@ -1,137 +1,127 @@
-import feedparser
-import httpx
+import os
+import json
 import logging
+from datetime import datetime
 from flask import Flask, jsonify
 from flask_cors import CORS
+import feedparser
+import httpx
 from apscheduler.schedulers.background import BackgroundScheduler
-from datetime import datetime
-from openai import OpenAI
 
-# --- CONFIG ---
-API_KEY = "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"
-FEEDS = [
-    "https://www.formula1.com/en/latest.rss",
+# Config
+RSS_FEEDS = [
+    "https://www.formula1.com/en/latest/rss/news.rss",
     "https://www.motorsport.com/rss/news/",
     "https://www.skysports.com/rss/12040",
-    "https://www.autosport.com/rss/f1/news/",
-    "https://www.f1i.com/feed/"
+    "https://www.autosport.com/rss/news/",
+    "https://www.fia.com/news/feed"
 ]
-NEWS_LIMIT = 20
+MAX_ARTICLES = 20
 
-# --- INIT ---
-app = Flask(__name__)
-CORS(app)
-scheduler = BackgroundScheduler()
-client = OpenAI(api_key=API_KEY)
-articles_cache = []
-
+# Logging
 logging.basicConfig(level=logging.INFO)
 
-# --- UTIL ---
-async def fetch_feed(url):
-    logging.info(f"[FETCH] {url}")
-    feed = feedparser.parse(url)
-    items = []
-    for entry in feed.entries:
-        items.append({
-            "title": entry.get("title"),
-            "summary": entry.get("summary", ""),
-            "url": entry.get("link"),
-            "published": entry.get("published", datetime.utcnow().isoformat())
-        })
-    return items
+# Flask app
+app = Flask(__name__)
+CORS(app)
+
+# Stockage en mémoire
+news_items = []
+
+# Scheduler
+scheduler = BackgroundScheduler()
+
+# Récupère la clé OpenAI depuis les variables d'environnement
+OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
+if not OPENAI_API_KEY:
+    raise ValueError("Clé OpenAI manquante ! Mets OPENAI_API_KEY dans tes variables d'environnement")
+
+HEADERS = {
+    "Authorization": f"Bearer {OPENAI_API_KEY}",
+    "Content-Type": "application/json"
+}
+
+def fetch_articles():
+    logging.info("[FETCH] Récupération des articles RSS")
+    articles = []
+    for feed_url in RSS_FEEDS:
+        try:
+            feed = feedparser.parse(feed_url)
+            for entry in feed.entries[:MAX_ARTICLES]:
+                articles.append({
+                    "title": entry.get("title", ""),
+                    "summary": entry.get("summary", ""),
+                    "url": entry.get("link", ""),
+                    "published": getattr(entry, "published", datetime.utcnow().isoformat()),
+                    "source": feed_url
+                })
+        except Exception as e:
+            logging.error(f"[FETCH] Erreur récupération {feed_url}: {e}")
+    logging.info(f"[FETCH] {len(articles)} articles récupérés")
+    return articles
 
 def deduplicate_articles(articles):
-    """Regroupe les articles proches sémantiquement via OpenAI embeddings"""
-    if not articles:
-        return []
-
+    seen_titles = set()
     unique_articles = []
-    seen_texts = []
-
-    for art in articles:
-        text_to_check = art["title"] + " " + art["summary"]
-        is_duplicate = False
-        for seen in seen_texts:
-            # comparaison rapide via simple ratio de similarité avec OpenAI embeddings
-            resp = client.embeddings.create(
-                model="text-embedding-3-small",
-                input=[text_to_check, seen]
-            )
-            emb1, emb2 = resp.data[0].embedding, resp.data[1].embedding
-            # cos similarity
-            dot = sum(a*b for a,b in zip(emb1, emb2))
-            norm1 = sum(a*a for a in emb1) ** 0.5
-            norm2 = sum(b*b for b in emb2) ** 0.5
-            similarity = dot / (norm1 * norm2)
-            if similarity > 0.85:
-                is_duplicate = True
-                break
-        if not is_duplicate:
-            unique_articles.append(art)
-            seen_texts.append(text_to_check)
+    for a in articles:
+        t = a['title'].lower()
+        if t not in seen_titles:
+            seen_titles.add(t)
+            unique_articles.append(a)
     return unique_articles
 
 def rewrite_article(article):
-    """Réécrit le titre et le résumé en français via OpenAI"""
-    prompt = (
-        f"Réécris cet article de Formule 1 en français, de façon claire et concise :\n\n"
-        f"Titre : {article['title']}\nRésumé : {article['summary']}\n\nRéécriture :"
-    )
-    resp = client.chat.completions.create(
-        model="gpt-4o-mini",
-        messages=[{"role": "user", "content": prompt}],
-        temperature=0.7
-    )
-    rewritten = resp.choices[0].message.content.strip()
-    return {
-        "title": rewritten.split("\n")[0] if "\n" in rewritten else rewritten,
-        "summary": rewritten,
-        "url": article["url"],
-        "published_at": article["published"],
-        "sources": [article["url"].split("/")[2]]
+    """
+    Appelle OpenAI pour réécrire l'article en français.
+    """
+    payload = {
+        "model": "gpt-4",
+        "messages": [
+            {"role": "system", "content": "Réécris l'article en français de façon claire et synthétique."},
+            {"role": "user", "content": f"Titre: {article['title']}\nRésumé: {article['summary']}"}
+        ],
+        "temperature": 0.7,
+        "max_tokens": 300
     }
+    try:
+        response = httpx.post("https://api.openai.com/v1/chat/completions", headers=HEADERS, json=payload, timeout=15)
+        response.raise_for_status()
+        data = response.json()
+        content = data['choices'][0]['message']['content']
+        return {
+            "title": article['title'],
+            "summary": content,
+            "url": article['url'],
+            "published_at": article['published'],
+            "sources": [article['source']]
+        }
+    except Exception as e:
+        logging.error(f"[OPENAI] Erreur réécriture: {e}")
+        return None
 
-# --- PIPELINE ---
-async def pipeline():
-    logging.info("[PIPELINE] Récupération des flux")
-    all_articles = []
-    for feed in FEEDS:
-        try:
-            articles = await fetch_feed(feed)
-            all_articles.extend(articles)
-        except Exception as e:
-            logging.error(f"Erreur fetch {feed}: {e}")
+def pipeline():
+    logging.info("[PIPELINE] Début pipeline")
+    articles = fetch_articles()
+    unique_articles = deduplicate_articles(articles)
+    rewritten = []
+    for article in unique_articles:
+        rewritten_article = rewrite_article(article)
+        if rewritten_article:
+            rewritten.append(rewritten_article)
+    global news_items
+    news_items = rewritten[:MAX_ARTICLES]
+    logging.info(f"[PIPELINE] {len(news_items)} articles publiés")
 
-    logging.info(f"[PIPELINE] {len(all_articles)} articles récupérés")
-    unique_articles = deduplicate_articles(all_articles)
-    logging.info(f"[PIPELINE] {len(unique_articles)} articles après dé-duplication")
-
-    rewritten_articles = []
-    for art in unique_articles[:NEWS_LIMIT]:
-        try:
-            rewritten = rewrite_article(art)
-            rewritten_articles.append(rewritten)
-        except Exception as e:
-            logging.error(f"Erreur réécriture article {art['url']}: {e}")
-
-    global articles_cache
-    articles_cache = rewritten_articles
-    logging.info(f"[PIPELINE] {len(articles_cache)} articles prêts à être publiés")
-
-# --- ROUTES ---
+# Flask routes
 @app.route("/news")
-def news():
-    if not articles_cache:
-        return jsonify({"items": []})
-    return jsonify({"items": articles_cache})
+def get_news():
+    return jsonify({"items": news_items})
 
-# --- SCHEDULER ---
-scheduler.add_job(lambda: httpx.run(pipeline()), "interval", minutes=10)
+# Scheduler start
+scheduler.add_job(pipeline, 'interval', minutes=5)
 scheduler.start()
 
-# --- START ---
 if __name__ == "__main__":
-    import asyncio
-    asyncio.run(pipeline())
+    pipeline()  # Lance pipeline au démarrage
     app.run(host="0.0.0.0", port=10000)
+
