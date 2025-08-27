@@ -1,42 +1,25 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="fr">
 <head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>EN-POLE — Actus F1</title>
-  <link rel="preconnect" href="https://fonts.googleapis.com" />
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;800&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    <meta charset="UTF-8">
+    <title>EN-POLE - Actualités F1</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
 </head>
 <body>
-  <header class="site-header">
-    <div class="brand">
-      <div class="flag"></div>
-      <h1>EN-POLE</h1>
-    </div>
-    <button id="refreshBtn" class="btn">Rafraîchir</button>
-  </header>
-
-  <main class="container">
-    <section class="hero">
-      <h2>Dernières actus F1</h2>
-      <p class="sub">Brèves concises, nouvelles en haut. MAJ toutes les heures.</p>
-    </section>
-
-    <section id="articles" class="grid">
-      <!-- cartes injectées par app.js -->
-    </section>
-
-    <div id="emptyState" class="empty hidden">
-      <p>Aucune actualité pour le moment.</p>
-    </div>
-  </main>
-
-  <footer class="site-footer">
-    <p>© EN-POLE — sources: Motorsport, Autosport, RaceFans, PlanetF1, GPFans</p>
-  </footer>
-
-  <script src="{{ url_for('static', filename='js/app.js') }}"></script>
+    <header>
+        <h1>EN-POLE - Actualités Formule 1</h1>
+    </header>
+    <main>
+        <ul id="articles-list">
+            {% for article in articles %}
+                <li>
+                    <a href="{{ article.link }}" target="_blank">{{ article.title }}</a>
+                    <span class="source">({{ article.source }})</span>
+                    <span class="date">{{ article.published }}</span>
+                </li>
+            {% endfor %}
+        </ul>
+    </main>
+    <script src="{{ url_for('static', filename='js/app.js') }}"></script>
 </body>
 </html>
