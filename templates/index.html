@@ -1,19 +1,22 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="fr">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>EN-POLE | F1 News</title>
+    <title>EN-POLE | Actus F1</title>
     <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
 </head>
 <body>
     <header>
-        <h1>EN-POLE</h1>
-        <p>Dernières actualités Formule 1</p>
+        <h1>🏎️ EN-POLE</h1>
+        <p>Les dernières infos Formule 1, mises à jour automatiquement</p>
     </header>
-    <main>
-        <div id="news-container"></div>
-    </main>
+
+    <main id="articles"></main>
+
+    <footer>
+        <p>Powered by EN-POLE | Données RSS F1</p>
+    </footer>
+
     <script src="{{ url_for('static', filename='app.js') }}"></script>
 </body>
 </html>
