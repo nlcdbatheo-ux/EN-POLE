@@ -1,104 +1,67 @@
-import os
-import json
-import logging
-import feedparser
-from datetime import datetime, timezone
-from flask import Flask, jsonify, request
+from flask import Flask, jsonify
 from flask_cors import CORS
-from apscheduler.schedulers.background import BackgroundScheduler
-from dateutil import parser as date_parser
-from openai import OpenAI
+from datetime import datetime, timezone
+import feedparser
+import openai
+import logging
 
-# Config logging
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
+# Config
+RSS_FEEDS = [
+    "https://www.motorsport.com/rss/news/",
+    "https://www.formula1.com/en/latest.rss",
+]
+OPENAI_API_KEY = "ton_api_key_openai"
 
-# Init Flask
 app = Flask(__name__)
 CORS(app)
+logging.basicConfig(level=logging.INFO)
 
-# Init OpenAI
-client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
-
-# Données en mémoire
-ARTICLES = []
-GROUPED = []
-
-# ---- FETCH RSS ----
-FEEDS = [
-    "https://www.francetvinfo.fr/titres.rss",
-    "https://www.lemonde.fr/rss/une.xml",
-]
+openai.api_key = OPENAI_API_KEY
 
 def fetch_articles():
-    global ARTICLES
     articles = []
-    for url in FEEDS:
+    for url in RSS_FEEDS:
         feed = feedparser.parse(url)
         for entry in feed.entries[:10]:
             articles.append({
-                "title": getattr(entry, "title", "Sans titre"),
-                "link": getattr(entry, "link", ""),
-                "published": getattr(entry, "published", datetime.now(timezone.utc).isoformat())
+                "title": getattr(entry, "title", ""),
+                "summary": getattr(entry, "summary", ""),
+                "url": getattr(entry, "link", ""),
+                "published_at": getattr(entry, "published", datetime.now(timezone.utc).isoformat()),
+                "source": url
             })
-    ARTICLES = articles
-    logger.info(f"[FETCH] {len(articles)} articles récupérés.")
+    logging.info(f"[FETCH] {len(articles)} articles récupérés.")
+    return articles
 
-# ---- GROUPING ----
-def group_articles():
-    global GROUPED
-    if not ARTICLES:
-        return
-
-    titles = [a["title"] for a in ARTICLES]
-    prompt = {
-        "instruction": "Regroupe ces articles en 3 à 5 thèmes. Réponds uniquement en JSON valide.",
-        "articles": titles
-    }
-
+def group_articles_with_openai(articles):
+    if not articles:
+        return []
     try:
-        resp = client.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=[
-                {"role": "system", "content": "Tu es un assistant qui renvoie uniquement du JSON."},
-                {"role": "user", "content": json.dumps(prompt, ensure_ascii=False)}
-            ],
-            response_format={"type": "json_object"}  # ⬅️ FORCE JSON
+        prompt = "Groupe ces actus similaires en thèmes. Renvoie un JSON avec 'items': [{title, summary, url, published_at, sources}]."
+        messages = [
+            {"role": "system", "content": "Tu es un assistant qui groupe des actus similaires."},
+            {"role": "user", "content": prompt + f"\n{articles}"}
+        ]
+        response = openai.ChatCompletion.create(
+            model="gpt-4",
+            messages=messages,
+            temperature=0.3,
+            max_tokens=1000
         )
-
-        raw = resp.choices[0].message.content
-        logger.info(f"[OPENAI RAW] {raw}")
-
-        data = json.loads(raw)  # Parse strict JSON
-        GROUPED = data.get("themes", [])
-        logger.info(f"[GROUPING] {len(GROUPED)} thèmes trouvés.")
-
+        text = response.choices[0].message.content
+        import json
+        grouped = json.loads(text)
+        logging.info(f"[GROUPING] {len(grouped.get('items', []))} actus groupées.")
+        return grouped.get("items", [])
     except Exception as e:
-        logger.error(f"[GROUPING] Erreur parsing JSON GPT: {e}")
-        GROUPED = []
-
-# ---- PIPELINE ----
-def pipeline():
-    fetch_articles()
-    group_articles()
-    logger.info(f"[PIPELINE] {len(GROUPED)} actus publiées.")
-
-# Scheduler (toutes les 10 min)
-scheduler = BackgroundScheduler()
-scheduler.add_job(pipeline, "interval", minutes=10)
-scheduler.start()
-
-# ---- ROUTES ----
-@app.route("/")
-def home():
-    return jsonify({"status": "ok", "articles": len(ARTICLES), "grouped": len(GROUPED)})
+        logging.error(f"[GROUPING] Erreur parsing JSON GPT: {e}")
+        return []
 
 @app.route("/news")
-def get_news():
-    return jsonify(GROUPED)
-
-# Lancer une première fois
-pipeline()
+def news():
+    articles = fetch_articles()
+    grouped_items = group_articles_with_openai(articles)
+    return jsonify({"items": grouped_items})
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=10000)
