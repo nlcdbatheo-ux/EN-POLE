@@ -1,0 +1,48 @@
+/* Couleurs inspirées de la Formule 1 */
+body {
+    font-family: 'Roboto', sans-serif;
+    background-color: #111;
+    color: #eee;
+    margin: 0;
+    padding: 0;
+}
+
+header {
+    background-color: #d32f2f;
+    padding: 20px;
+    text-align: center;
+    font-size: 2em;
+    font-weight: bold;
+    color: #fff;
+}
+
+main {
+    padding: 20px;
+    max-width: 1000px;
+    margin: auto;
+}
+
+.article {
+    background-color: #222;
+    margin: 15px 0;
+    padding: 15px;
+    border-radius: 10px;
+    box-shadow: 0 0 15px rgba(255, 0, 0, 0.5);
+}
+
+.article h2 {
+    margin: 0 0 10px 0;
+    color: #ffeb3b;
+}
+
+.article p {
+    margin: 0;
+    line-height: 1.4;
+}
+
+footer {
+    text-align: center;
+    padding: 20px;
+    background-color: #333;
+    color: #aaa;
+}
