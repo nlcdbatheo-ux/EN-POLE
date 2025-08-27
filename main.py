@@ -1,43 +1,30 @@
-import os
+import feedparser
+import httpx
 import logging
 from datetime import datetime, timezone
-from flask import Flask, jsonify
-from flask_cors import CORS
-import feedparser
-from openai import OpenAI
 from apscheduler.schedulers.background import BackgroundScheduler
-from sklearn.metrics.pairwise import cosine_similarity
-from sklearn.feature_extraction.text import TfidfVectorizer
+from flask import Flask, jsonify
+from openai import OpenAI
 
+# --- CONFIG ---
+RSS_FEEDS = [
+    "https://example.com/rss",
+    "https://another.com/rss"
+]
+OPENAI_API_KEY = "VOTRE_OPENAI_API_KEY"
+
+# --- LOGGING ---
 logging.basicConfig(level=logging.INFO)
 
+# --- CLIENT OPENAI ---
+client = OpenAI(api_key=OPENAI_API_KEY)
+
+# --- FLASK ---
 app = Flask(__name__)
-CORS(app)
 
-client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
-
-RSS_FEEDS = [
-    "https://www.example.com/rss",
-    # ajoute tes flux RSS ici
-]
-
-articles_db = []
-
-def fetch_articles():
-    logging.info("[FETCH] Récupération des articles RSS")
-    articles = []
-    for feed_url in RSS_FEEDS:
-        feed = feedparser.parse(feed_url)
-        for entry in feed.entries:
-            articles.append({
-                "title": entry.get("title", ""),
-                "link": entry.get("link", ""),
-                "published": entry.get("published", datetime.now(timezone.utc).isoformat())
-            })
-    logging.info(f"[FETCH] {len(articles)} articles récupérés")
-    return articles
-
-def get_embedding(text):
+# --- FONCTIONS ---
+def get_embedding(text: str):
+    """Retourne l'embedding pour un texte."""
     response = client.embeddings.create(
         model="text-embedding-3-small",
         input=text
@@ -45,59 +32,73 @@ def get_embedding(text):
     return response.data[0].embedding
 
 def deduplicate_articles(articles):
-    logging.info("[DEDUP] Déduplication sémantique")
-    if not articles:
-        return []
-
-    titles = [a["title"] for a in articles]
-    embeddings = [get_embedding(t) for t in titles]
-
+    """Déduplication sémantique simple."""
     unique_articles = []
-    added_embeddings = []
-
-    for article, emb in zip(articles, embeddings):
-        if added_embeddings:
-            sim = cosine_similarity([emb], added_embeddings)[0]
-            if any(s > 0.85 for s in sim):
-                continue
-        unique_articles.append(article)
-        added_embeddings.append(emb)
-    logging.info(f"[DEDUP] {len(unique_articles)} articles uniques après déduplication")
+    embeddings = []
+    for article in articles:
+        emb = get_embedding(article["title"])
+        # Comparaison simple par similarité cosinus (approx)
+        if not any(sum(e1_i * e2_i for e1_i, e2_i in zip(emb, e)) > 0.95 for e in embeddings):
+            embeddings.append(emb)
+            unique_articles.append(article)
     return unique_articles
 
-def rewrite_titles(articles):
-    logging.info("[OPENAI] Réécriture des titres")
-    for article in articles:
-        try:
-            prompt = f"Réécris ce titre de manière claire et concise, en gardant le sens:\n\n{article['title']}"
-            response = client.chat.completions.create(
-                model="gpt-4o-mini",
-                messages=[{"role": "user", "content": prompt}],
-                temperature=0.5
-            )
-            article['title_rewrite'] = response.choices[0].message.content.strip()
-        except Exception as e:
-            logging.warning(f"[OPENAI] Échec réécriture: {e}")
-            article['title_rewrite'] = article['title']
+def rewrite_article(article):
+    """Réécrit le titre pour uniformiser le style."""
+    prompt = (
+        f"Réécris ce titre pour le rendre uniforme et clair, "
+        f"en gardant le sens exact:\n{article['title']}"
+    )
+    response = client.chat.completions.create(
+        model="gpt-4o-mini",
+        messages=[{"role": "user", "content": prompt}]
+    )
+    rewritten_title = response.choices[0].message.content
+    article["title"] = rewritten_title
+    return article
+
+def fetch_articles():
+    """Récupère les articles depuis les flux RSS."""
+    articles = []
+    for feed_url in RSS_FEEDS:
+        feed = feedparser.parse(feed_url)
+        for entry in feed.entries:
+            articles.append({
+                "title": entry.get("title"),
+                "link": entry.get("link"),
+                "published": entry.get("published", datetime.now(timezone.utc).isoformat())
+            })
+    logging.info(f"[FETCH] {len(articles)} articles récupérés")
     return articles
 
 def pipeline():
     logging.info("[PIPELINE] Début pipeline")
     articles = fetch_articles()
-    articles = deduplicate_articles(articles)
-    articles = rewrite_titles(articles)
-    global articles_db
-    articles_db = articles
-    logging.info("[PIPELINE] Articles publiés")
+    logging.info("[DEDUP] Déduplication sémantique")
+    unique_articles = deduplicate_articles(articles)
+    logging.info("[REWRITE] Réécriture des titres")
+    rewritten_articles = [rewrite_article(a) for a in unique_articles]
+    global latest_articles
+    latest_articles = rewritten_articles
+    logging.info(f"[PIPELINE] {len(rewritten_articles)} articles publiés")
 
+# --- SCHEDULER ---
 scheduler = BackgroundScheduler()
-scheduler.add_job(pipeline, 'interval', minutes=10)  # toutes les 10 minutes
+scheduler.add_job(pipeline, 'interval', hours=1)  # exécution toutes les heures
 scheduler.start()
 
-@app.route("/news", methods=["GET"])
-def get_news():
-    return jsonify(articles_db)
+# --- ROUTES FLASK ---
+latest_articles = []
 
+@app.route("/news")
+def news():
+    return jsonify(latest_articles)
+
+@app.route("/")
+def home():
+    return "API en marche. Accédez à /news pour les articles."
+
+# --- MAIN ---
 if __name__ == "__main__":
-    pipeline()
+    pipeline()  # lancer une première fois au démarrage
     app.run(host="0.0.0.0", port=10000)
