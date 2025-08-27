@@ -7,18 +7,19 @@
 </head>
 <body>
     <header>
-        <h1>EN-POLE - Actualités Formule 1</h1>
+        <h1>EN-POLE - Actualités F1</h1>
     </header>
     <main>
-        <ul id="articles-list">
+        <section id="articles">
             {% for article in articles %}
-                <li>
-                    <a href="{{ article.link }}" target="_blank">{{ article.title }}</a>
-                    <span class="source">({{ article.source }})</span>
-                    <span class="date">{{ article.published }}</span>
-                </li>
+                <article>
+                    <h2>{{ article.title }}</h2>
+                    <p><em>{{ article.source }} - {{ article.published }}</em></p>
+                    <p>{{ article.summary|safe }}</p>
+                    <p><a href="{{ article.link }}" target="_blank">Lire la suite</a></p>
+                </article>
             {% endfor %}
-        </ul>
+        </section>
     </main>
     <script src="{{ url_for('static', filename='js/app.js') }}"></script>
 </body>
