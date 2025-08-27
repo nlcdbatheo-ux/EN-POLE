@@ -1,118 +1,88 @@
-import os
 import feedparser
-import httpx
 import logging
 from datetime import datetime
 from flask import Flask, jsonify
 from flask_cors import CORS
-from apscheduler.schedulers.background import BackgroundScheduler
-from openai import OpenAI
+import time
+import threading
+import openai
+import os
+
+# Configuration
+SOURCES = [
+    "https://www.motorsport.com/rss/news/",
+    "https://www.formula1.com/en/latest.rss",
+    "https://www.skysports.com/rss/12040"
+]
+CHECK_INTERVAL = 600  # 10 minutes
+openai.api_key = os.environ.get("OPENAI_API_KEY")  # tu mets ta clé en variable d'environnement
 
 logging.basicConfig(level=logging.INFO)
-
 app = Flask(__name__)
 CORS(app)
 
-openai_api_key = os.environ.get("OPENAI_API_KEY")
-client = OpenAI(api_key=openai_api_key)
-
-RSS_FEEDS = [
-    "https://www.motorsport.com/rss/news/",
-    "https://www.formula1.com/rss/news/latest.html",
-    "https://www.skysports.com/rss/12040"
-]
-
 ARTICLES = []
 
-# Paramètres de similarité
-SIMILARITY_THRESHOLD = 0.85  # Entre 0 et 1
-
 def fetch_articles():
-    logging.info("[FETCH] Récupération des articles RSS")
     articles = []
-    for feed_url in RSS_FEEDS:
-        feed = feedparser.parse(feed_url)
+    for url in SOURCES:
+        feed = feedparser.parse(url)
         for entry in feed.entries:
-            articles.append({
-                "title": getattr(entry, "title", ""),
-                "summary": getattr(entry, "summary", ""),
-                "url": getattr(entry, "link", ""),
-                "published": getattr(entry, "published", datetime.utcnow().isoformat())
-            })
+            article = {
+                "title": entry.get("title", ""),
+                "link": entry.get("link", ""),
+                "published": entry.get("published", datetime.utcnow().isoformat())
+            }
+            articles.append(article)
     logging.info(f"[FETCH] {len(articles)} articles récupérés")
     return articles
 
-def get_embedding(text):
-    response = client.embeddings.create(
-        model="text-embedding-3-small",
-        input=text
-    )
-    return response.data[0].embedding
-
-def cosine_similarity(a, b):
-    from numpy import dot
-    from numpy.linalg import norm
-    return dot(a, b) / (norm(a) * norm(b))
-
 def deduplicate_articles(articles):
-    logging.info("[DEDUP] Déduplication sémantique")
+    seen_titles = set()
     unique_articles = []
-    embeddings = []
-
     for article in articles:
-        emb = get_embedding(article["title"])
-        is_unique = True
-        for e in embeddings:
-            if cosine_similarity(emb, e) > SIMILARITY_THRESHOLD:
-                is_unique = False
-                break
-        if is_unique:
-            embeddings.append(emb)
+        title_lower = article["title"].lower()
+        if title_lower not in seen_titles:
+            seen_titles.add(title_lower)
             unique_articles.append(article)
-
     logging.info(f"[DEDUP] {len(unique_articles)} articles uniques après déduplication")
     return unique_articles
 
-def rewrite_article(article):
-    try:
-        prompt = f"Réécris cet article en français clair et concis :\n\nTitre: {article['title']}\nRésumé: {article['summary']}"
-        response = client.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=[{"role": "user", "content": prompt}],
-            temperature=0.7
-        )
-        content = response.choices[0].message.content
-        return {
-            "title": content.split("\n")[0],
-            "summary": "\n".join(content.split("\n")[1:]),
-            "url": article["url"],
-            "published": article["published"]
-        }
-    except Exception as e:
-        logging.error(f"[OPENAI] Erreur réécriture: {e}")
-        return article
+def rewrite_articles_openai(articles):
+    rewritten = []
+    for article in articles:
+        try:
+            prompt = f"Réécris ce texte en français de manière claire et concise:\n{article['title']}"
+            response = openai.ChatCompletion.create(
+                model="gpt-4",
+                messages=[{"role": "user", "content": prompt}],
+                max_tokens=100
+            )
+            new_title = response['choices'][0]['message']['content'].strip()
+            article['title'] = new_title
+        except Exception as e:
+            logging.warning(f"[OPENAI] Échec réécriture: {e}")
+        rewritten.append(article)
+    return rewritten
 
 def pipeline():
+    global ARTICLES
     logging.info("[PIPELINE] Début pipeline")
     articles = fetch_articles()
-    unique_articles = deduplicate_articles(articles)
-    rewritten_articles = [rewrite_article(a) for a in unique_articles]
-    
-    global ARTICLES
-    ARTICLES = rewritten_articles
+    articles = deduplicate_articles(articles)
+    articles = rewrite_articles_openai(articles)
+    ARTICLES = articles
     logging.info(f"[PIPELINE] {len(ARTICLES)} articles publiés")
 
-@app.route("/news")
-def get_news():
-    limit = int(httpx.Request.args.get("limit", 20))
-    if not ARTICLES:
-        return jsonify({"items": []})
-    return jsonify({"items": ARTICLES[:limit]})
+def scheduler():
+    while True:
+        pipeline()
+        time.sleep(CHECK_INTERVAL)
 
-scheduler = BackgroundScheduler()
-scheduler.add_job(pipeline, "interval", minutes=2)
-scheduler.start()
+@app.route("/news", methods=["GET"])
+def get_news():
+    return jsonify({"items": ARTICLES})
 
 if __name__ == "__main__":
-    pipeline()
+    threading.Thread(target=scheduler, daemon=True).start()
     app.run(host="0.0.0.0", port=10000)
