@@ -1,4 +1,6 @@
-Flask==3.0.3
-flask-cors==4.0.0
-openai>=1.30.0
-python-dateutil>=2.9.1
+flask
+flask-cors
+apscheduler
+feedparser
+python-dateutil
+openai>=1.0.0
