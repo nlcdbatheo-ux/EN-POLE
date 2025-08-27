@@ -1,156 +1,104 @@
 import os
-import logging
 import json
-from datetime import datetime
-from flask import Flask, jsonify
+import logging
 import feedparser
+from datetime import datetime, timezone
+from flask import Flask, jsonify, request
+from flask_cors import CORS
+from apscheduler.schedulers.background import BackgroundScheduler
+from dateutil import parser as date_parser
 from openai import OpenAI
 
-# -------------------- CONFIG --------------------
-NEWS_SOURCES = [
-    ("Motorsport", "https://www.motorsport.com/rss/f1/news/"),
-    ("F1.com", "https://www.formula1.com/rss/news/latest"),
-    ("Autosport", "https://www.autosport.com/rss/f1/news/")
+# Config logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+# Init Flask
+app = Flask(__name__)
+CORS(app)
+
+# Init OpenAI
+client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+
+# Données en mémoire
+ARTICLES = []
+GROUPED = []
+
+# ---- FETCH RSS ----
+FEEDS = [
+    "https://www.francetvinfo.fr/titres.rss",
+    "https://www.lemonde.fr/rss/une.xml",
 ]
 
-CONFIRMATION_MIN_SOURCES = 2
-MAX_ITEMS_PER_SOURCE = 10
+def fetch_articles():
+    global ARTICLES
+    articles = []
+    for url in FEEDS:
+        feed = feedparser.parse(url)
+        for entry in feed.entries[:10]:
+            articles.append({
+                "title": getattr(entry, "title", "Sans titre"),
+                "link": getattr(entry, "link", ""),
+                "published": getattr(entry, "published", datetime.now(timezone.utc).isoformat())
+            })
+    ARTICLES = articles
+    logger.info(f"[FETCH] {len(articles)} articles récupérés.")
 
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
-if not OPENAI_API_KEY:
-    raise RuntimeError("OPENAI_API_KEY manquant – définis-le dans Render !")
+# ---- GROUPING ----
+def group_articles():
+    global GROUPED
+    if not ARTICLES:
+        return
 
-client = OpenAI(api_key=OPENAI_API_KEY)
-
-# -------------------- FLASK --------------------
-app = Flask(__name__)
-logging.basicConfig(level=logging.INFO)
-
-# -------------------- ETAPE 1 : FETCH --------------------
-def fetch_rss():
-    """Récupère les articles depuis les flux RSS."""
-    all_items = []
-    for source_name, url in NEWS_SOURCES:
-        try:
-            feed = feedparser.parse(url)
-            for entry in feed.entries[:MAX_ITEMS_PER_SOURCE]:
-                item = {
-                    "source": source_name,
-                    "title": entry.title,
-                    "summary": getattr(entry, "summary", ""),
-                    "published": getattr(entry, "published", datetime.utcnow().isoformat())
-                }
-                all_items.append(item)
-        except Exception as e:
-            logging.error(f"[FETCH] Erreur sur {source_name}: {e}")
-    logging.info(f"[FETCH] {len(all_items)} articles récupérés.")
-    return all_items
-
-# -------------------- ETAPE 2 : GROUPEMENT --------------------
-def group_by_similarity(items):
-    """Utilise GPT pour regrouper les articles similaires et renvoyer un JSON valide."""
-    prompt = """
-    Voici une liste d'articles de plusieurs sites F1.
-    Regroupe ceux qui parlent du même événement (même si les formulations diffèrent).
-    Réponds uniquement en JSON avec le format suivant :
-
-    [
-      {
-        "event": "Résumé court de l'événement",
-        "sources": ["NomSite1", "NomSite2"],
-        "titles": ["titre1", "titre2"]
-      }
-    ]
-
-    Ne garde que les événements confirmés par au moins 2 sources.
-    """
-
-    articles_text = "\n".join([f"- ({a['source']}) {a['title']}" for a in items])
-
-    response = client.chat.completions.create(
-        model="gpt-4o-mini",
-        response_format={"type": "json_object"},
-        messages=[
-            {"role": "system", "content": "Tu regroupes les articles et tu renvoies uniquement du JSON valide."},
-            {"role": "user", "content": prompt + "\n" + articles_text}
-        ],
-        temperature=0
-    )
-
-    content = response.choices[0].message.content.strip()
-    logging.info(f"[GPT RAW OUTPUT] {content}")
+    titles = [a["title"] for a in ARTICLES]
+    prompt = {
+        "instruction": "Regroupe ces articles en 3 à 5 thèmes. Réponds uniquement en JSON valide.",
+        "articles": titles
+    }
 
     try:
-        groups = json.loads(content)
-        logging.info(f"[GROUPING] {len(groups)} groupes détectés par GPT.")
+        resp = client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[
+                {"role": "system", "content": "Tu es un assistant qui renvoie uniquement du JSON."},
+                {"role": "user", "content": json.dumps(prompt, ensure_ascii=False)}
+            ],
+            response_format={"type": "json_object"}  # ⬅️ FORCE JSON
+        )
+
+        raw = resp.choices[0].message.content
+        logger.info(f"[OPENAI RAW] {raw}")
+
+        data = json.loads(raw)  # Parse strict JSON
+        GROUPED = data.get("themes", [])
+        logger.info(f"[GROUPING] {len(GROUPED)} thèmes trouvés.")
+
     except Exception as e:
-        logging.error(f"[GROUPING] Erreur parsing JSON GPT: {e}")
-        groups = []
+        logger.error(f"[GROUPING] Erreur parsing JSON GPT: {e}")
+        GROUPED = []
 
-    return groups
-
-# -------------------- ETAPE 3 : VALIDATION --------------------
-def validate_group(group):
-    """Valide qu'un groupe est bien confirmé par assez de sources."""
-    if len(group.get("sources", [])) < CONFIRMATION_MIN_SOURCES:
-        logging.info(f"[VALIDATION] Groupe rejeté (trop peu de sources): {group.get('event')}")
-        return False
-    logging.info(f"[VALIDATION] Groupe validé: {group.get('event')} ({len(group['sources'])} sources)")
-    return True
-
-# -------------------- ETAPE 4 : REFORMULATION --------------------
-def reformulate_event(event):
-    """Demande à GPT de rédiger une brève neutre et concise."""
-    prompt = f"""
-    Rédige une brève neutre et concise à partir de ces titres d'articles :
-    {event['titles']}
-    """
-
-    response = client.chat.completions.create(
-        model="gpt-4o-mini",
-        messages=[
-            {"role": "system", "content": "Tu es un journaliste sportif, concis et factuel."},
-            {"role": "user", "content": prompt}
-        ],
-        temperature=0.5
-    )
-
-    text = response.choices[0].message.content.strip()
-    logging.info(f"[REFORMULATION] Brève générée: {text[:60]}...")
-    return text
-
-# -------------------- ETAPE 5 : PIPELINE COMPLET --------------------
+# ---- PIPELINE ----
 def pipeline():
-    items = fetch_rss()
-    groups = group_by_similarity(items)
-    results = []
-    for g in groups:
-        if not validate_group(g):
-            continue
-        summary = reformulate_event(g)
-        results.append({
-            "summary": summary,
-            "sources": g["sources"]
-        })
-    logging.info(f"[PIPELINE] {len(results)} actus publiées.")
-    return results
+    fetch_articles()
+    group_articles()
+    logger.info(f"[PIPELINE] {len(GROUPED)} actus publiées.")
 
-# -------------------- ROUTES --------------------
+# Scheduler (toutes les 10 min)
+scheduler = BackgroundScheduler()
+scheduler.add_job(pipeline, "interval", minutes=10)
+scheduler.start()
+
+# ---- ROUTES ----
 @app.route("/")
 def home():
-    return {"message": "Service de news F1 en ligne."}
+    return jsonify({"status": "ok", "articles": len(ARTICLES), "grouped": len(GROUPED)})
 
 @app.route("/news")
-def news():
-    return jsonify(pipeline())
+def get_news():
+    return jsonify(GROUPED)
 
-@app.route("/debug")
-def debug():
-    """Montre les regroupements bruts avant reformulation."""
-    items = fetch_rss()
-    groups = group_by_similarity(items)
-    return jsonify(groups)
+# Lancer une première fois
+pipeline()
 
-# -------------------- MAIN --------------------
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
+    app.run(host="0.0.0.0", port=10000)
