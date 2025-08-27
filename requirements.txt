@@ -1,4 +1,7 @@
-Flask==2.3.2
-feedparser==6.0.10
-openai==0.28
-gunicorn==20.1.0
+Flask==3.0.3
+flask-cors==4.0.0
+APScheduler==3.10.4
+feedparser==6.0.11
+python-dateutil==2.9.0.post0
+openai==1.102.0
+httpx==0.28.1
