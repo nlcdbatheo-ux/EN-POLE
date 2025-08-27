@@ -1,104 +1,96 @@
-import feedparser
-import httpx
-import logging
-from datetime import datetime, timezone
+from flask import Flask, jsonify, render_template
+from flask_cors import CORS
 from apscheduler.schedulers.background import BackgroundScheduler
-from flask import Flask, jsonify
+import feedparser
+from datetime import datetime
+import pytz
 from openai import OpenAI
+import logging
 
-# --- CONFIG ---
+# --- Configuration ---
 RSS_FEEDS = [
-    "https://example.com/rss",
-    "https://another.com/rss"
+    "https://www.example.com/rss",
+    "https://www.anotherexample.com/rss"
 ]
-OPENAI_API_KEY = "VOTRE_OPENAI_API_KEY"
+OPENAI_API_KEY = "TON_OPENAI_API_KEY"
+FETCH_INTERVAL_MINUTES = 60  # Toutes les heures
 
-# --- LOGGING ---
 logging.basicConfig(level=logging.INFO)
-
-# --- CLIENT OPENAI ---
-client = OpenAI(api_key=OPENAI_API_KEY)
-
-# --- FLASK ---
 app = Flask(__name__)
+CORS(app)
 
-# --- FONCTIONS ---
-def get_embedding(text: str):
-    """Retourne l'embedding pour un texte."""
-    response = client.embeddings.create(
-        model="text-embedding-3-small",
-        input=text
-    )
-    return response.data[0].embedding
+client = OpenAI(api_key=OPENAI_API_KEY)
+articles = []
 
-def deduplicate_articles(articles):
-    """Déduplication sémantique simple."""
-    unique_articles = []
-    embeddings = []
-    for article in articles:
-        emb = get_embedding(article["title"])
-        # Comparaison simple par similarité cosinus (approx)
-        if not any(sum(e1_i * e2_i for e1_i, e2_i in zip(emb, e)) > 0.95 for e in embeddings):
-            embeddings.append(emb)
-            unique_articles.append(article)
-    return unique_articles
-
-def rewrite_article(article):
-    """Réécrit le titre pour uniformiser le style."""
-    prompt = (
-        f"Réécris ce titre pour le rendre uniforme et clair, "
-        f"en gardant le sens exact:\n{article['title']}"
-    )
-    response = client.chat.completions.create(
-        model="gpt-4o-mini",
-        messages=[{"role": "user", "content": prompt}]
-    )
-    rewritten_title = response.choices[0].message.content
-    article["title"] = rewritten_title
-    return article
-
+# --- Fonction de récupération RSS ---
 def fetch_articles():
-    """Récupère les articles depuis les flux RSS."""
-    articles = []
-    for feed_url in RSS_FEEDS:
-        feed = feedparser.parse(feed_url)
+    global articles
+    logging.info("[FETCH] Début récupération RSS")
+    fetched = []
+    for url in RSS_FEEDS:
+        feed = feedparser.parse(url)
         for entry in feed.entries:
-            articles.append({
-                "title": entry.get("title"),
-                "link": entry.get("link"),
-                "published": entry.get("published", datetime.now(timezone.utc).isoformat())
+            fetched.append({
+                "title": entry.get("title", ""),
+                "link": entry.get("link", ""),
+                "published": entry.get("published", datetime.utcnow().isoformat())
             })
-    logging.info(f"[FETCH] {len(articles)} articles récupérés")
-    return articles
+    logging.info(f"[FETCH] {len(fetched)} articles récupérés")
+    articles = deduplicate_articles(fetched)
 
-def pipeline():
-    logging.info("[PIPELINE] Début pipeline")
-    articles = fetch_articles()
-    logging.info("[DEDUP] Déduplication sémantique")
-    unique_articles = deduplicate_articles(articles)
-    logging.info("[REWRITE] Réécriture des titres")
-    rewritten_articles = [rewrite_article(a) for a in unique_articles]
-    global latest_articles
-    latest_articles = rewritten_articles
-    logging.info(f"[PIPELINE] {len(rewritten_articles)} articles publiés")
+# --- Déduplication sémantique ---
+def deduplicate_articles(article_list):
+    logging.info("[DEDUP] Début déduplication sémantique")
+    unique = []
+    seen_embeddings = []
+    
+    for article in article_list:
+        emb = get_embedding(article["title"])
+        # On vérifie la similarité avec les articles déjà vus
+        if not any(similarity(emb, e) > 0.85 for e in seen_embeddings):
+            unique.append(article)
+            seen_embeddings.append(emb)
+    
+    logging.info(f"[DEDUP] {len(unique)} articles uniques après déduplication")
+    return unique
 
-# --- SCHEDULER ---
-scheduler = BackgroundScheduler()
-scheduler.add_job(pipeline, 'interval', hours=1)  # exécution toutes les heures
-scheduler.start()
+# --- Création embeddings avec OpenAI ---
+def get_embedding(text):
+    try:
+        response = client.embeddings.create(
+            model="text-embedding-3-small",
+            input=text
+        )
+        return response.data[0].embedding
+    except Exception as e:
+        logging.error(f"[OPENAI] Erreur embedding : {e}")
+        return []
 
-# --- ROUTES FLASK ---
-latest_articles = []
+# --- Calcul de similarité cosinus ---
+def similarity(vec1, vec2):
+    if not vec1 or not vec2:
+        return 0
+    dot = sum(a*b for a, b in zip(vec1, vec2))
+    norm1 = sum(a*a for a in vec1) ** 0.5
+    norm2 = sum(b*b for b in vec2) ** 0.5
+    return dot / (norm1 * norm2) if norm1 and norm2 else 0
 
-@app.route("/news")
-def news():
-    return jsonify(latest_articles)
-
+# --- Routes Flask ---
 @app.route("/")
 def home():
-    return "API en marche. Accédez à /news pour les articles."
+    return render_template("index.html")
 
-# --- MAIN ---
+@app.route("/news")
+def get_news():
+    return jsonify(articles)
+
+# --- Scheduler pour fetch automatique ---
+scheduler = BackgroundScheduler()
+scheduler.add_job(fetch_articles, "interval", minutes=FETCH_INTERVAL_MINUTES)
+scheduler.start()
+
+# --- Premier fetch au démarrage ---
+fetch_articles()
+
 if __name__ == "__main__":
-    pipeline()  # lancer une première fois au démarrage
     app.run(host="0.0.0.0", port=10000)
