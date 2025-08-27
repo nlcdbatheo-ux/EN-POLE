@@ -1,35 +1,29 @@
 import os
 import json
 import logging
-import feedparser
+from datetime import datetime
 from flask import Flask, render_template, jsonify
 from apscheduler.schedulers.background import BackgroundScheduler
+import feedparser
 import openai
 
-# --- Configuration logging ---
+# ----------------- CONFIG -----------------
+STATIC_DIR = "static"
+ARTICLES_FILE = os.path.join(STATIC_DIR, "articles.json")
+PORT = int(os.environ.get("PORT", 10000))  # Render attribue le port via variable d'environnement
+
+# Clé OpenAI depuis Render
+openai.api_key = os.environ.get("OPENAI_API_KEY")
+
+# Logger
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("en-pole")
 
-# --- Configuration Flask ---
+# ----------------- INIT -----------------
 app = Flask(__name__)
+scheduler = BackgroundScheduler()
 
-# --- Directories & files ---
-STATIC_DIR = os.path.join(os.path.dirname(__file__), "static")
-ARTICLES_FILE = os.path.join(STATIC_DIR, "articles.json")
-
-# --- RSS feeds ---
-RSS_FEEDS = [
-    "https://www.formula1.com/en/latest.rss",
-    "https://feeds.bbci.co.uk/sport/formula1/rss.xml",
-    "https://www.motorsport.com/rss/f1/news/",
-    "https://www.crash.net/rss/formula1/news",
-    "https://www.racefans.net/feed/"
-]
-
-# --- OpenAI configuration ---
-openai.api_key = os.environ.get("OPENAI_API_KEY")
-
-# --- Helpers ---
+# ----------------- FONCTIONS -----------------
 def ensure_files():
     os.makedirs(os.path.join(STATIC_DIR, "css"), exist_ok=True)
     os.makedirs(os.path.join(STATIC_DIR, "js"), exist_ok=True)
@@ -37,80 +31,97 @@ def ensure_files():
         with open(ARTICLES_FILE, "w", encoding="utf-8") as f:
             json.dump([], f, ensure_ascii=False, indent=2)
 
-def load_articles():
-    if os.path.exists(ARTICLES_FILE):
-        with open(ARTICLES_FILE, "r", encoding="utf-8") as f:
-            return json.load(f)
-    return []
-
-def save_articles(articles):
-    with open(ARTICLES_FILE, "w", encoding="utf-8") as f:
-        json.dump(articles, f, ensure_ascii=False, indent=2)
-
-def summarize_article(title, summary):
+def traduire_en_francais(texte):
     try:
-        prompt = f"Résume ce texte de manière concise en français:\nTitre: {title}\nRésumé: {summary}"
         response = openai.chat.completions.create(
             model="gpt-4",
-            messages=[{"role": "user", "content": prompt}],
-            max_tokens=150
+            messages=[
+                {"role": "system", "content": "Tu es un traducteur français précis et naturel."},
+                {"role": "user", "content": f"Traduis ce texte en français :\n\n{texte}"}
+            ],
+            temperature=0.3
         )
-        return response.choices[0].message["content"].strip()
+        return response.choices[0].message.content.strip()
     except Exception as e:
-        logger.error(f"Erreur OpenAI : {e}")
-        return f"{title} - {summary} (source originale)"
+        logger.error("Erreur OpenAI : %s", e)
+        return texte  # Retourne le texte original si OpenAI échoue
 
 def fetch_articles():
     logger.info("[FETCH] Début récupération RSS")
-    articles = load_articles()
-    new_articles = []
+    feeds = [
+        {"name": "F1.com", "url": "https://www.formula1.com/en/latest.rss"},
+        {"name": "Autosport", "url": "https://www.autosport.com/rss/f1-news"},
+        {"name": "Motorsport", "url": "https://www.motorsport.com/rss/f1/"},
+        {"name": "ESPN F1", "url": "https://www.espn.com/espn/rss/f1/news"},
+        {"name": "Sky Sports F1", "url": "https://www.skysports.com/rss/12040"}
+    ]
 
-    for feed_url in RSS_FEEDS:
-        feed = feedparser.parse(feed_url)
-        for entry in feed.entries[:2]:  # Limiter à 2 articles par site pour optimiser mémoire
-            title = entry.get("title", "")
-            summary = entry.get("summary", "")
-            link = entry.get("link", "")
-            author = entry.get("author", "Source inconnue")
+    articles = []
+    for feed in feeds:
+        try:
+            parsed = feedparser.parse(feed["url"])
+            for entry in parsed.entries[:2]:  # Limiter à 2 articles par site
+                article = {
+                    "source": feed["name"],
+                    "title": traduire_en_francais(entry.get("title", "")),
+                    "summary": traduire_en_francais(entry.get("summary", "")),
+                    "link": entry.get("link", ""),
+                    "published": entry.get("published", str(datetime.utcnow()))
+                }
+                articles.append(article)
+        except Exception as e:
+            logger.error("Erreur récupération %s : %s", feed["name"], e)
 
-            # Détection simple de doublons par titre
-            if any(a['title'] == title for a in articles + new_articles):
-                continue
+    # Déduplication simple
+    seen_titles = set()
+    unique_articles = []
+    for a in articles:
+        if a["title"] not in seen_titles:
+            seen_titles.add(a["title"])
+            unique_articles.append(a)
 
-            summary_fr = summarize_article(title, summary)
-            new_articles.append({
-                "title": title,
-                "summary": summary_fr,
-                "link": link,
-                "author": author
-            })
+    # Sauvegarde
+    try:
+        if os.path.exists(ARTICLES_FILE):
+            with open(ARTICLES_FILE, "r", encoding="utf-8") as f:
+                saved_articles = json.load(f)
+        else:
+            saved_articles = []
 
-    if new_articles:
-        # On ajoute les nouveaux articles au début
-        articles = new_articles + articles
-        save_articles(articles)
-        logger.info(f"[SAVE] {len(new_articles)} articles fusionnés et sauvegardés")
+        # Conserver les anciens articles + nouveaux
+        all_articles = unique_articles + saved_articles
+        all_articles = all_articles[:50]  # Limiter pour éviter mémoire excessive
 
-# --- Routes Flask ---
-@app.route('/')
-def home():
-    articles = load_articles()
+        with open(ARTICLES_FILE, "w", encoding="utf-8") as f:
+            json.dump(all_articles, f, ensure_ascii=False, indent=2)
+
+        logger.info("[SAVE] Articles fusionnés et sauvegardés")
+    except Exception as e:
+        logger.error("Erreur sauvegarde articles : %s", e)
+
+# ----------------- ROUTES -----------------
+@app.route("/")
+def index():
+    try:
+        with open(ARTICLES_FILE, "r", encoding="utf-8") as f:
+            articles = json.load(f)
+    except Exception:
+        articles = []
     return render_template("index.html", articles=articles)
 
-@app.route('/articles.json')
-def get_articles():
-    return jsonify(load_articles())
+@app.route("/articles.json")
+def articles_json():
+    try:
+        with open(ARTICLES_FILE, "r", encoding="utf-8") as f:
+            articles = json.load(f)
+    except Exception:
+        articles = []
+    return jsonify(articles)
 
-# --- Scheduler ---
-scheduler = BackgroundScheduler()
-scheduler.add_job(fetch_articles, 'interval', hours=1)
-scheduler.start()
-
-# --- Initial setup ---
-ensure_files()
-fetch_articles()
-
-# --- Lancement Flask ---
-if __name__ == '__main__':
-    port = int(os.environ.get("PORT", 5000))
-    app.run(host='0.0.0.0', port=port)
+# ----------------- MAIN -----------------
+if __name__ == "__main__":
+    ensure_files()
+    fetch_articles()
+    scheduler.add_job(fetch_articles, 'interval', hours=1)
+    scheduler.start()
+    app.run(host="0.0.0.0", port=PORT)
