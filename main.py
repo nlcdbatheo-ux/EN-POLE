@@ -48,11 +48,12 @@ def fetch_rss():
 
 # -------------------- ETAPE 2 : GROUPEMENT --------------------
 def group_by_similarity(items):
-    """Utilise GPT pour regrouper les articles similaires."""
+    """Utilise GPT pour regrouper les articles similaires et renvoyer un JSON valide."""
     prompt = """
-    Voici une liste d'articles provenant de plusieurs sites F1.
-    Regroupe ceux qui parlent du même événement, même si la formulation diffère.
-    Réponds uniquement en JSON, format:
+    Voici une liste d'articles de plusieurs sites F1.
+    Regroupe ceux qui parlent du même événement (même si les formulations diffèrent).
+    Réponds uniquement en JSON avec le format suivant :
+
     [
       {
         "event": "Résumé court de l'événement",
@@ -60,6 +61,7 @@ def group_by_similarity(items):
         "titles": ["titre1", "titre2"]
       }
     ]
+
     Ne garde que les événements confirmés par au moins 2 sources.
     """
 
@@ -67,15 +69,19 @@ def group_by_similarity(items):
 
     response = client.chat.completions.create(
         model="gpt-4o-mini",
+        response_format={"type": "json_object"},
         messages=[
-            {"role": "system", "content": "Tu es un assistant qui regroupe des articles similaires."},
+            {"role": "system", "content": "Tu regroupes les articles et tu renvoies uniquement du JSON valide."},
             {"role": "user", "content": prompt + "\n" + articles_text}
         ],
         temperature=0
     )
 
+    content = response.choices[0].message.content.strip()
+    logging.info(f"[GPT RAW OUTPUT] {content}")
+
     try:
-        groups = json.loads(response.choices[0].message.content)
+        groups = json.loads(content)
         logging.info(f"[GROUPING] {len(groups)} groupes détectés par GPT.")
     except Exception as e:
         logging.error(f"[GROUPING] Erreur parsing JSON GPT: {e}")
