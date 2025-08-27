@@ -1,14 +1,25 @@
-document.addEventListener("DOMContentLoaded", () => {
-    console.log("Page loaded — scripts working!");
+async function loadArticles() {
+    try {
+        let response = await fetch("/api/articles");
+        let data = await response.json();
 
-    // Exemple : ajouter un effet simple aux articles
-    const articles = document.querySelectorAll(".article");
-    articles.forEach(article => {
-        article.addEventListener("mouseover", () => {
-            article.style.boxShadow = "0 0 20px rgba(255, 235, 59, 0.8)";
+        let container = document.getElementById("articles");
+        container.innerHTML = "";
+
+        data.forEach(article => {
+            let div = document.createElement("div");
+            div.className = "article";
+            div.innerHTML = `
+                <h2>${article.title}</h2>
+                <p>${article.summary}</p>
+                <a href="${article.link}" target="_blank">Lire l'article complet</a>
+                <p><em>Source : ${article.source}</em></p>
+            `;
+            container.appendChild(div);
         });
-        article.addEventListener("mouseout", () => {
-            article.style.boxShadow = "0 0 15px rgba(255, 0, 0, 0.5)";
-        });
-    });
-});
+    } catch (err) {
+        console.error("Erreur chargement articles:", err);
+    }
+}
+
+document.addEventListener("DOMContentLoaded", loadArticles);
