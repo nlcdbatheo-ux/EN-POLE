@@ -1,78 +1,56 @@
-from flask import Flask, render_template
-import feedparser
-import openai
 import os
 import logging
-from difflib import SequenceMatcher
+from flask import Flask, render_template, jsonify
+from flask_cors import CORS
+import feedparser
+import openai
 
-app = Flask(__name__)
-logging.basicConfig(level=logging.INFO)
-
-# Utilisation de la clé OpenAI via les variables d'environnement (Render)
-# Pas besoin de mettre la clé ici
+# Configuration OpenAI via variable d'environnement
 openai.api_key = os.getenv("OPENAI_API_KEY")
 
-# Liste des flux RSS F1
+app = Flask(__name__)
+CORS(app)
+
+# Liste de flux RSS Formule 1
 RSS_FEEDS = [
-    {"name": "F1News", "url": "https://www.formula1.com/rss/news.xml"},
-    {"name": "Autosport", "url": "https://www.autosport.com/rss/f1/news/"},
-    {"name": "Motorsport", "url": "https://www.motorsport.com/rss/f1/"},
-    {"name": "BBC F1", "url": "https://feeds.bbci.co.uk/sport/formula1/rss.xml"},
-    {"name": "ESPN F1", "url": "https://www.espn.com/espn/rss/f1/news"}
+    "https://www.formula1.com/en/latest/rss.xml",
+    "https://www.f1i.com/feed/",
+    "https://www.motorsport.com/rss/f1/news/",
+    "https://www.autosport.com/rss/f1/",
+    "https://www.crash.net/rss/f1/news"
 ]
 
-# Fonction pour comparer deux textes et vérifier si ce sont grosso modo les mêmes
-def similar(a, b):
-    return SequenceMatcher(None, a, b).ratio() > 0.8
-
-# Fonction pour utiliser OpenAI pour résumer/reformuler/traduire
 def summarize_article(title, content):
-    if not openai.api_key:
-        logging.warning("OpenAI non disponible, on retourne l'article original")
-        return content
-    prompt = f"""
-Résumé, reformule et traduis en français si nécessaire cet article de F1.
-Si impossible, renvoie l'article original.
-Titre: {title}
-Contenu: {content}
-"""
     try:
         response = openai.ChatCompletion.create(
-            model="gpt-4",
-            messages=[{"role": "user", "content": prompt}],
-            temperature=0.3
+            model="gpt-3.5-turbo",
+            messages=[
+                {"role": "system", "content": "Tu es un assistant qui résume les articles de Formule 1."},
+                {"role": "user", "content": f"Résume cet article et traduis-le en français si nécessaire :\nTitre : {title}\nContenu : {content}"}
+            ],
+            max_tokens=150
         )
-        summary = response['choices'][0]['message']['content'].strip()
-        return summary
+        return response.choices[0].message['content']
     except Exception as e:
         logging.error(f"Erreur OpenAI : {e}")
-        return content
-
-# Récupération et déduplication des articles
-def fetch_articles():
-    articles = []
-    for feed in RSS_FEEDS:
-        logging.info(f"[FETCH] Récupération depuis {feed['name']}")
-        try:
-            parsed = feedparser.parse(feed["url"])
-            for entry in parsed.entries:
-                article = {
-                    "title": entry.get("title", ""),
-                    "content": entry.get("summary", entry.get("description", "")),
-                    "source": entry.get("link", feed["url"])
-                }
-                # Déduplication approximative
-                if not any(similar(article["content"], a["content"]) for a in articles):
-                    article["content"] = summarize_article(article["title"], article["content"])
-                    articles.append(article)
-        except Exception as e:
-            logging.error(f"[ERROR] Erreur récupération {feed['name']}: {e}")
-    return articles
+        # Renvoie au moins le titre original si OpenAI échoue
+        return f"[Résumé indisponible] {title}"
 
 @app.route("/")
 def home():
-    news = fetch_articles()
-    return render_template("index.html", news=news)
+    articles = []
+
+    for feed_url in RSS_FEEDS:
+        feed = feedparser.parse(feed_url)
+        for entry in feed.entries[:2]:  # max 2 articles par flux pour limiter
+            summary = summarize_article(entry.get('title', ''), entry.get('summary', ''))
+            articles.append({
+                "title": entry.get('title', ''),
+                "link": entry.get('link', ''),
+                "summary": summary
+            })
+
+    return render_template("index.html", articles=articles)
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=10000)
+    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 10000)))
