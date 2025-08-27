@@ -1,96 +1,80 @@
-from flask import Flask, jsonify, render_template
+from flask import Flask, render_template, jsonify
 from flask_cors import CORS
 from apscheduler.schedulers.background import BackgroundScheduler
 import feedparser
 from datetime import datetime
-import pytz
-from openai import OpenAI
-import logging
+import openai
+import os
 
-# --- Configuration ---
-RSS_FEEDS = [
-    "https://www.example.com/rss",
-    "https://www.anotherexample.com/rss"
-]
-OPENAI_API_KEY = "TON_OPENAI_API_KEY"
-FETCH_INTERVAL_MINUTES = 60  # Toutes les heures
-
-logging.basicConfig(level=logging.INFO)
 app = Flask(__name__)
 CORS(app)
 
-client = OpenAI(api_key=OPENAI_API_KEY)
+# Configure OpenAI
+openai.api_key = os.getenv("OPENAI_API_KEY")
+
+# Stockage des articles
 articles = []
 
-# --- Fonction de récupération RSS ---
+RSS_FEEDS = [
+    "https://www.formula1.com/en/latest.rss"
+]
+
+def rewrite_article(content):
+    try:
+        response = openai.chat.completions.create(
+            model="gpt-4",
+            messages=[
+                {"role": "system", "content": "You are a professional F1 news editor."},
+                {"role": "user", "content": content}
+            ]
+        )
+        return response.choices[0].message.content
+    except Exception as e:
+        print(f"[OPENAI] Échec réécriture: {e}")
+        return content
+
 def fetch_articles():
     global articles
-    logging.info("[FETCH] Début récupération RSS")
-    fetched = []
+    all_articles = []
+    print("[FETCH] Début récupération RSS")
     for url in RSS_FEEDS:
         feed = feedparser.parse(url)
         for entry in feed.entries:
-            fetched.append({
-                "title": entry.get("title", ""),
-                "link": entry.get("link", ""),
+            all_articles.append({
+                "title": entry.get("title"),
+                "link": entry.get("link"),
                 "published": entry.get("published", datetime.utcnow().isoformat())
             })
-    logging.info(f"[FETCH] {len(fetched)} articles récupérés")
-    articles = deduplicate_articles(fetched)
-
-# --- Déduplication sémantique ---
-def deduplicate_articles(article_list):
-    logging.info("[DEDUP] Début déduplication sémantique")
-    unique = []
-    seen_embeddings = []
+    print(f"[FETCH] {len(all_articles)} articles récupérés")
     
-    for article in article_list:
-        emb = get_embedding(article["title"])
-        # On vérifie la similarité avec les articles déjà vus
-        if not any(similarity(emb, e) > 0.85 for e in seen_embeddings):
-            unique.append(article)
-            seen_embeddings.append(emb)
-    
-    logging.info(f"[DEDUP] {len(unique)} articles uniques après déduplication")
-    return unique
+    # Déduplication simple
+    unique = {}
+    for a in all_articles:
+        if a["link"] not in unique:
+            unique[a["link"]] = a
+    articles = list(unique.values())
+    print(f"[DEDUP] {len(articles)} articles uniques après déduplication")
 
-# --- Création embeddings avec OpenAI ---
-def get_embedding(text):
-    try:
-        response = client.embeddings.create(
-            model="text-embedding-3-small",
-            input=text
-        )
-        return response.data[0].embedding
-    except Exception as e:
-        logging.error(f"[OPENAI] Erreur embedding : {e}")
-        return []
+# Scheduler pour récupérer toutes les heures
+scheduler = BackgroundScheduler()
+scheduler.add_job(fetch_articles, 'interval', hours=1)
+scheduler.start()
 
-# --- Calcul de similarité cosinus ---
-def similarity(vec1, vec2):
-    if not vec1 or not vec2:
-        return 0
-    dot = sum(a*b for a, b in zip(vec1, vec2))
-    norm1 = sum(a*a for a in vec1) ** 0.5
-    norm2 = sum(b*b for b in vec2) ** 0.5
-    return dot / (norm1 * norm2) if norm1 and norm2 else 0
-
-# --- Routes Flask ---
-@app.route("/")
+@app.route('/')
 def home():
     return render_template("index.html")
 
-@app.route("/news")
+@app.route('/news')
 def get_news():
-    return jsonify(articles)
+    global articles
+    # Réécriture avec OpenAI
+    rewritten = []
+    for a in articles:
+        a_copy = a.copy()
+        a_copy["title"] = rewrite_article(a["title"])
+        rewritten.append(a_copy)
+    return jsonify(rewritten)
 
-# --- Scheduler pour fetch automatique ---
-scheduler = BackgroundScheduler()
-scheduler.add_job(fetch_articles, "interval", minutes=FETCH_INTERVAL_MINUTES)
-scheduler.start()
-
-# --- Premier fetch au démarrage ---
-fetch_articles()
-
-if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=10000)
+if __name__ == '__main__':
+    fetch_articles()
+    app.run(host='0.0.0.0', port=10000)
