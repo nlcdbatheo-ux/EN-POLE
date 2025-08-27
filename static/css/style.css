@@ -2,7 +2,8 @@ body {
     font-family: Arial, sans-serif;
     margin: 0;
     padding: 0;
-    background: #f2f2f2;
+    background: #f5f5f5;
+    color: #333;
 }
 
 header {
@@ -16,27 +17,23 @@ main {
     padding: 20px;
 }
 
-ul#articles-list {
-    list-style: none;
-    padding: 0;
-}
-
-ul#articles-list li {
+article {
     background: white;
-    margin-bottom: 10px;
-    padding: 10px;
-    border-radius: 5px;
+    padding: 15px;
+    margin-bottom: 20px;
+    border-radius: 8px;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
 }
 
-ul#articles-list li a {
-    font-weight: bold;
-    text-decoration: none;
+article h2 {
+    margin-top: 0;
+}
+
+a {
     color: #e10600;
+    text-decoration: none;
 }
 
-ul#articles-list li .source,
-ul#articles-list li .date {
-    display: block;
-    font-size: 0.9em;
-    color: #555;
+a:hover {
+    text-decoration: underline;
 }
