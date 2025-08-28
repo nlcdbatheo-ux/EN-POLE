@@ -2,43 +2,32 @@
 <html lang="fr">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>En Pole - Actus F1</title>
-    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
-    <script src="{{ url_for('static', filename='js/app.js') }}" defer></script>
+    <title>Actualités F1 - En-Pole</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 20px; background-color: #f9f9f9; }
+        h1 { color: #d40000; }
+        .article { background: #fff; padding: 15px; margin-bottom: 15px; border-radius: 8px; box-shadow: 0 2px 5px rgba(0,0,0,0.1); }
+        .title { font-size: 18px; font-weight: bold; color: #333; }
+        .summary { margin-top: 5px; color: #555; }
+        .sources { margin-top: 10px; font-size: 12px; color: #888; }
+        .sources a { color: #888; text-decoration: none; margin-right: 5px; }
+        .sources a:hover { text-decoration: underline; }
+    </style>
 </head>
 <body>
-    <header>
-        <h1>🏎️ En Pole</h1>
-        <p>Les dernières actus Formule 1</p>
-    </header>
+    <h1>Actualités Formule 1</h1>
 
-    <main>
-        {% if articles %}
-            <section id="articles">
-                {% for article in articles %}
-                <article class="card">
-                    <h2>{{ article.title }}</h2>
-                    <p>{{ article.summary }}</p>
-                    <div class="meta">
-                        <span>{{ article.date[:10] }}</span>
-                        <span class="sources">
-                            Sources :
-                            {% for src in article.sources %}
-                                <a href="{{ src }}" target="_blank">{{ loop.index }}</a>
-                            {% endfor %}
-                        </span>
-                    </div>
-                </article>
-                {% endfor %}
-            </section>
-        {% else %}
-            <p class="no-articles">Aucun article disponible pour le moment.</p>
-        {% endif %}
-    </main>
-
-    <footer>
-        <p>© 2025 En Pole. Développé avec ❤️ et café.</p>
-    </footer>
+    {% for article in articles %}
+    <div class="article">
+        <div class="title">{{ article.title }}</div>
+        <div class="summary">{{ article.summary }}</div>
+        <div class="sources">
+            Sources :
+            {% for src in article.sources %}
+            <a href="{{ src }}" target="_blank">{{ src }}</a>
+            {% endfor %}
+        </div>
+    </div>
+    {% endfor %}
 </body>
 </html>
