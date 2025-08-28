@@ -2,25 +2,43 @@
 <html lang="fr">
 <head>
     <meta charset="UTF-8">
-    <title>EN-POLE - Actualités F1</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>En Pole - Actus F1</title>
     <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    <script src="{{ url_for('static', filename='js/app.js') }}" defer></script>
 </head>
 <body>
     <header>
-        <h1>EN-POLE - Actualités F1</h1>
+        <h1>🏎️ En Pole</h1>
+        <p>Les dernières actus Formule 1, résumées et traduites</p>
     </header>
+
     <main>
-        <section id="articles">
-            {% for article in articles %}
-                <article>
+        {% if articles %}
+            <section id="articles">
+                {% for article in articles %}
+                <article class="card">
                     <h2>{{ article.title }}</h2>
-                    <p><em>{{ article.source }} - {{ article.published }}</em></p>
-                    <p>{{ article.summary|safe }}</p>
-                    <p><a href="{{ article.link }}" target="_blank">Lire la suite</a></p>
+                    <p>{{ article.summary }}</p>
+                    <div class="meta">
+                        <span>{{ article.date[:10] }}</span>
+                        <span class="sources">
+                            Sources :
+                            {% for src in article.sources %}
+                                <a href="{{ src }}" target="_blank">{{ loop.index }}</a>
+                            {% endfor %}
+                        </span>
+                    </div>
                 </article>
-            {% endfor %}
-        </section>
+                {% endfor %}
+            </section>
+        {% else %}
+            <p class="no-articles">Aucun article disponible pour le moment.</p>
+        {% endif %}
     </main>
-    <script src="{{ url_for('static', filename='js/app.js') }}"></script>
+
+    <footer>
+        <p>© 2025 En Pole. Développé avec ❤️ et café.</p>
+    </footer>
 </body>
 </html>
