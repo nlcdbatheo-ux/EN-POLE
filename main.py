@@ -23,11 +23,14 @@ client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 # Flask
 app = Flask(__name__, template_folder="templates", static_folder="static")
 
-# RSS FEEDS F1 UNIQUEMENT
+# RSS FEEDS F1 UNIQUEMENT (SkySports retiré)
 RSS_FEEDS = [
-    "https://www.skysports/f1.com/rss/12040",   # SkySports F1
-    "https://www.formula1.com/rss",          # Formula1.com
-    "https://www.motorsport.com/rss/f1/news/", # Motorsport F1
+    "https://www.formula1.com/rss",                   # Formula1.com
+    "https://www.motorsport.com/rss/f1/news/",       # Motorsport F1
+    "https://www.autosport.com/f1/rss",              # Autosport F1
+    "https://www.crash.net/f1/rss/news",             # Crash.net F1
+    "https://www.f1i.com/feed/",                     # F1i.com
+    "https://www.f1fanatic.co.uk/feed/"              # F1Fanatic
 ]
 
 # ---------------- UTILS ---------------- #
@@ -50,14 +53,14 @@ def similar(a, b):
 
 # ---------------- OPENAI ---------------- #
 def summarize_and_translate(title, content):
-    """Résumé + traduction FR via OpenAI. Fallback si erreur."""
+    """Résumé + traduction FR via OpenAI en une seule phrase. Fallback si erreur."""
     try:
         prompt = f"""
         Voici un article en anglais sur la F1 :
         Titre : {title}
         Contenu : {content}
 
-        1. Résume-le en français en 2 phrases max.
+        1. Résume-le en **une seule phrase** en français.
         2. Traduis le titre en français.
         """
         response = client.chat.completions.create(
@@ -108,7 +111,7 @@ def fetch_articles():
                 fr_title, fr_summary = summarize_and_translate(title, summary)
                 new_articles.append({
                     "title": fr_title,
-                    "summary": fr_summary,
+                    "summary": fr_summary,  # seulement le résumé en français (1 phrase)
                     "date": date,
                     "sources": [link],
                 })
