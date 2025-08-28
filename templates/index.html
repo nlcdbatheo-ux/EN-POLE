@@ -4,30 +4,92 @@
     <meta charset="UTF-8">
     <title>Actualités F1 - En-Pole</title>
     <style>
-        body { font-family: Arial, sans-serif; margin: 20px; background-color: #f9f9f9; }
-        h1 { color: #d40000; }
-        .article { background: #fff; padding: 15px; margin-bottom: 15px; border-radius: 8px; box-shadow: 0 2px 5px rgba(0,0,0,0.1); }
-        .title { font-size: 18px; font-weight: bold; color: #333; }
-        .summary { margin-top: 5px; color: #555; }
-        .sources { margin-top: 10px; font-size: 12px; color: #888; }
-        .sources a { color: #888; text-decoration: none; margin-right: 5px; }
-        .sources a:hover { text-decoration: underline; }
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background-color: #121212;
+            color: #e0e0e0;
+            margin: 0;
+            padding: 0;
+        }
+        header {
+            background-color: #d40000;
+            padding: 20px;
+            text-align: center;
+        }
+        header h1 {
+            margin: 0;
+            color: #fff;
+            font-size: 2rem;
+        }
+        main {
+            max-width: 900px;
+            margin: 20px auto;
+            padding: 0 20px;
+        }
+        .article {
+            background-color: #1e1e1e;
+            padding: 20px;
+            border-radius: 10px;
+            margin-bottom: 20px;
+            box-shadow: 0 4px 8px rgba(0,0,0,0.5);
+            transition: transform 0.2s;
+        }
+        .article:hover {
+            transform: translateY(-2px);
+        }
+        .title {
+            font-size: 1.4rem;
+            font-weight: bold;
+            margin-bottom: 10px;
+            color: #ff6f61;
+        }
+        .summary {
+            font-size: 1rem;
+            line-height: 1.5;
+            color: #cccccc;
+        }
+        .sources {
+            margin-top: 15px;
+            font-size: 0.85rem;
+            color: #999999;
+        }
+        .sources a {
+            color: #ff6f61;
+            text-decoration: none;
+            margin-right: 10px;
+        }
+        .sources a:hover {
+            text-decoration: underline;
+        }
+        footer {
+            text-align: center;
+            padding: 15px;
+            background-color: #1e1e1e;
+            color: #888;
+            margin-top: 40px;
+        }
     </style>
 </head>
 <body>
-    <h1>Actualités Formule 1</h1>
-
-    {% for article in articles %}
-    <div class="article">
-        <div class="title">{{ article.title }}</div>
-        <div class="summary">{{ article.summary }}</div>
-        <div class="sources">
-            Sources :
-            {% for src in article.sources %}
-            <a href="{{ src }}" target="_blank">{{ src }}</a>
-            {% endfor %}
+    <header>
+        <h1>Actualités Formule 1</h1>
+    </header>
+    <main>
+        {% for article in articles %}
+        <div class="article">
+            <div class="title">{{ article.title }}</div>
+            <div class="summary">{{ article.summary }}</div>
+            <div class="sources">
+                Sources :
+                {% for src in article.sources %}
+                <a href="{{ src }}" target="_blank">{{ src }}</a>
+                {% endfor %}
+            </div>
         </div>
-    </div>
-    {% endfor %}
+        {% endfor %}
+    </main>
+    <footer>
+        &copy; 2025 En-Pole - Tous droits réservés
+    </footer>
 </body>
 </html>
