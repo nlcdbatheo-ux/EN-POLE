@@ -25,7 +25,7 @@ app = Flask(__name__, template_folder="templates", static_folder="static")
 
 # RSS FEEDS F1 UNIQUEMENT
 RSS_FEEDS = [
-    "https://www.skysports.com/rss/12040",   # SkySports F1
+    "https://www.skysports/f1.com/rss/12040",   # SkySports F1
     "https://www.formula1.com/rss",          # Formula1.com
     "https://www.motorsport.com/rss/f1/news/", # Motorsport F1
 ]
