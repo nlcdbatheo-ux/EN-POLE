@@ -23,14 +23,18 @@ client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 # Flask
 app = Flask(__name__, template_folder="templates", static_folder="static")
 
-# RSS FEEDS F1 UNIQUEMENT (SkySports retiré)
+# ---------------- RSS FEEDS ---------------- #
 RSS_FEEDS = [
     "https://www.formula1.com/rss",                   # Formula1.com
     "https://www.motorsport.com/rss/f1/news/",       # Motorsport F1
     "https://www.autosport.com/f1/rss",              # Autosport F1
     "https://www.crash.net/f1/rss/news",             # Crash.net F1
     "https://www.f1i.com/feed/",                     # F1i.com
-    "https://www.f1fanatic.co.uk/feed/"              # F1Fanatic
+    "https://www.f1fanatic.co.uk/feed/",             # F1Fanatic
+    "https://www.racefans.net/feed/",                # RaceFans
+    "https://www.grandprix247.com/feed/",            # GrandPrix247
+    "https://www.thecheckeredflag.co.uk/feed/",      # The Checkered Flag
+    "https://www.paddocktalk.com/rss/f1"             # PaddockTalk F1
 ]
 
 # ---------------- UTILS ---------------- #
