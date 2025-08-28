@@ -2,126 +2,141 @@ import os
 import json
 import logging
 from datetime import datetime
-from flask import Flask, render_template, jsonify
-from apscheduler.schedulers.background import BackgroundScheduler
 import feedparser
-import openai
+from flask import Flask, render_template
+from apscheduler.schedulers.background import BackgroundScheduler
+from difflib import SequenceMatcher
+from openai import OpenAI
 
-# ----------------- CONFIG -----------------
-STATIC_DIR = "static"
-ARTICLES_FILE = os.path.join(STATIC_DIR, "articles.json")
-PORT = int(os.environ.get("PORT", 10000))  # Render attribue le port via variable d'environnement
-
-# Clé OpenAI depuis Render
-openai.api_key = os.environ.get("OPENAI_API_KEY")
-
-# Logger
-logging.basicConfig(level=logging.INFO)
+# ---------------- CONFIG ---------------- #
+logging.basicConfig(level=logging.INFO, format="%(levelname)s:%(name)s:%(message)s")
 logger = logging.getLogger("en-pole")
 
-# ----------------- INIT -----------------
-app = Flask(__name__)
-scheduler = BackgroundScheduler()
+# Chemins
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+STATIC_DIR = os.path.join(BASE_DIR, "static")
+ARTICLES_FILE = os.path.join(STATIC_DIR, "articles.json")
 
-# ----------------- FONCTIONS -----------------
+# OpenAI
+client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+
+# Flask
+app = Flask(__name__, template_folder="templates", static_folder="static")
+
+# RSS FEEDS F1 UNIQUEMENT
+RSS_FEEDS = [
+    "https://www.skysports.com/rss/12040",   # SkySports F1
+    "https://www.formula1.com/rss",          # Formula1.com
+    "https://www.motorsport.com/rss/f1/news/", # Motorsport F1
+]
+
+# ---------------- UTILS ---------------- #
 def ensure_files():
-    os.makedirs(os.path.join(STATIC_DIR, "css"), exist_ok=True)
-    os.makedirs(os.path.join(STATIC_DIR, "js"), exist_ok=True)
+    os.makedirs(STATIC_DIR, exist_ok=True)
     if not os.path.exists(ARTICLES_FILE):
         with open(ARTICLES_FILE, "w", encoding="utf-8") as f:
             json.dump([], f, ensure_ascii=False, indent=2)
 
-def traduire_en_francais(texte):
-    try:
-        response = openai.chat.completions.create(
-            model="gpt-4",
-            messages=[
-                {"role": "system", "content": "Tu es un traducteur français précis et naturel."},
-                {"role": "user", "content": f"Traduis ce texte en français :\n\n{texte}"}
-            ],
-            temperature=0.3
-        )
-        return response.choices[0].message.content.strip()
-    except Exception as e:
-        logger.error("Erreur OpenAI : %s", e)
-        return texte  # Retourne le texte original si OpenAI échoue
+def load_articles():
+    with open(ARTICLES_FILE, "r", encoding="utf-8") as f:
+        return json.load(f)
 
+def save_articles(articles):
+    with open(ARTICLES_FILE, "w", encoding="utf-8") as f:
+        json.dump(articles, f, ensure_ascii=False, indent=2)
+
+def similar(a, b):
+    return SequenceMatcher(None, a, b).ratio()
+
+# ---------------- OPENAI ---------------- #
+def summarize_and_translate(title, content):
+    """Résumé + traduction FR via OpenAI. Fallback si erreur."""
+    try:
+        prompt = f"""
+        Voici un article en anglais sur la F1 :
+        Titre : {title}
+        Contenu : {content}
+
+        1. Résume-le en français en 2 phrases max.
+        2. Traduis le titre en français.
+        """
+        response = client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[{"role": "user", "content": prompt}],
+        )
+        result = response.choices[0].message.content.strip()
+
+        # Séparer titre et résumé si possible
+        if "\n" in result:
+            lines = result.split("\n")
+            fr_title = lines[0].replace("Titre:", "").strip()
+            summary = " ".join(lines[1:]).replace("Résumé:", "").strip()
+        else:
+            fr_title, summary = title, result
+
+        return fr_title, summary
+    except Exception as e:
+        logger.error(f"[OpenAI] Erreur traduction : {e}")
+        return title, content[:200] + "..."
+
+# ---------------- LOGIQUE ---------------- #
 def fetch_articles():
     logger.info("[FETCH] Début récupération RSS")
-    feeds = [
-        {"name": "F1.com", "url": "https://www.formula1.com/en/latest.rss"},
-        {"name": "Autosport", "url": "https://www.autosport.com/rss/f1-news"},
-        {"name": "Motorsport", "url": "https://www.motorsport.com/rss/f1/"},
-        {"name": "ESPN F1", "url": "https://www.espn.com/espn/rss/f1/news"},
-        {"name": "Sky Sports F1", "url": "https://www.skysports.com/rss/12040"}
-    ]
+    ensure_files()
+    existing = load_articles()
 
-    articles = []
-    for feed in feeds:
-        try:
-            parsed = feedparser.parse(feed["url"])
-            for entry in parsed.entries[:2]:  # Limiter à 2 articles par site
-                article = {
-                    "source": feed["name"],
-                    "title": traduire_en_francais(entry.get("title", "")),
-                    "summary": traduire_en_francais(entry.get("summary", "")),
-                    "link": entry.get("link", ""),
-                    "published": entry.get("published", str(datetime.utcnow()))
-                }
-                articles.append(article)
-        except Exception as e:
-            logger.error("Erreur récupération %s : %s", feed["name"], e)
+    new_articles = []
+    for feed_url in RSS_FEEDS:
+        feed = feedparser.parse(feed_url)
+        for entry in feed.entries[:5]:
+            title = entry.get("title", "")
+            link = entry.get("link", "")
+            summary = entry.get("summary", "")
+            date = entry.get("published", datetime.utcnow().isoformat())
 
-    # Déduplication simple
-    seen_titles = set()
-    unique_articles = []
-    for a in articles:
-        if a["title"] not in seen_titles:
-            seen_titles.add(a["title"])
-            unique_articles.append(a)
+            # Vérifier similarité
+            found_similar = False
+            for art in existing:
+                if similar(title, art["title"]) > 0.7:
+                    if link not in art["sources"]:
+                        art["sources"].append(link)
+                    found_similar = True
+                    break
 
-    # Sauvegarde
-    try:
-        if os.path.exists(ARTICLES_FILE):
-            with open(ARTICLES_FILE, "r", encoding="utf-8") as f:
-                saved_articles = json.load(f)
-        else:
-            saved_articles = []
+            if not found_similar:
+                # Nouveau -> résumer/traduire
+                fr_title, fr_summary = summarize_and_translate(title, summary)
+                new_articles.append({
+                    "title": fr_title,
+                    "summary": fr_summary,
+                    "date": date,
+                    "sources": [link],
+                })
 
-        # Conserver les anciens articles + nouveaux
-        all_articles = unique_articles + saved_articles
-        all_articles = all_articles[:50]  # Limiter pour éviter mémoire excessive
+    if new_articles:
+        all_articles = new_articles + existing
+        save_articles(all_articles)
+        logger.info(f"[SAVE] {len(new_articles)} nouveaux articles sauvegardés")
+    else:
+        logger.info("[SAVE] Aucun nouvel article")
 
-        with open(ARTICLES_FILE, "w", encoding="utf-8") as f:
-            json.dump(all_articles, f, ensure_ascii=False, indent=2)
-
-        logger.info("[SAVE] Articles fusionnés et sauvegardés")
-    except Exception as e:
-        logger.error("Erreur sauvegarde articles : %s", e)
-
-# ----------------- ROUTES -----------------
+# ---------------- FLASK ---------------- #
 @app.route("/")
 def index():
-    try:
-        with open(ARTICLES_FILE, "r", encoding="utf-8") as f:
-            articles = json.load(f)
-    except Exception:
-        articles = []
-    return render_template("index.html", articles=articles)
+    ensure_files()
+    articles = load_articles()
+    articles_sorted = sorted(articles, key=lambda x: x["date"], reverse=True)
+    return render_template("index.html", articles=articles_sorted)
 
-@app.route("/articles.json")
-def articles_json():
-    try:
-        with open(ARTICLES_FILE, "r", encoding="utf-8") as f:
-            articles = json.load(f)
-    except Exception:
-        articles = []
-    return jsonify(articles)
-
-# ----------------- MAIN -----------------
+# ---------------- MAIN ---------------- #
 if __name__ == "__main__":
     ensure_files()
-    fetch_articles()
-    scheduler.add_job(fetch_articles, 'interval', hours=1)
+
+    scheduler = BackgroundScheduler(daemon=True)
+    scheduler.add_job(fetch_articles, "interval", minutes=5)
     scheduler.start()
-    app.run(host="0.0.0.0", port=PORT)
+
+    fetch_articles()  # première récupération immédiate
+
+    port = int(os.environ.get("PORT", 10000))
+    app.run(host="0.0.0.0", port=port)
